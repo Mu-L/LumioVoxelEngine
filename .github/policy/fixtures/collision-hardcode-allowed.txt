@@ -1,0 +1,16 @@
+豁免样本 —— collision-hardcode-guard.sh 的自检 3 要求:下面每一行都是合规写法,
+必须一条判据都不命中。守卫哪天收紧到误伤这些写法,自检 3 当场红。
+
+air 哨兵。契约 blockId.resolution.builtInSentinels 把 type 0 定为 air 且
+"ordinaryMaterialAndTemplateLookup": false —— 它明文不走普通材质查表,所以物理面
+必须、也只能自己认出它。这是唯一豁免,且只认十进制 0 这一种写法:
+    if block_id.block_type().raw() == 0 {
+    let is_empty_cell = block_id.block_type().raw() == 0;
+
+阻挡与否只来自调用方注入的材质类表,判据不得妨碍这套写法:
+    Ok(match self.materials.class_for(block_id.block_type()) {
+    Some(class) if filter.contains(class) => CellVisit::Hit(block_id),
+    None => return Err(PhysicsQueryError::unknown_material_class()),
+
+与运行时求得的值比较不是身份硬编码:
+    if block_type.raw() != self.rows.len() as u32 {

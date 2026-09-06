@@ -76,6 +76,19 @@ jobs:
             *) echo "::error::git grep exited with $status" >&2; exit "$status" ;;
           esac
 
+  collision-from-material-table:
+    name: Collision behavior comes from the material table (query.collision-comes-from-material-table)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject hardcoded per-BlockType collision branches in physics/query code
+        # 契约 rule query.collision-comes-from-material-table 的静态守卫。
+        # 该 rule 的 invalidCase(physics_hardcodes_liquid_passability)的 given 是一段源码而不是
+        # 触发载荷,契约自己标了 "validatorCheck": false —— 运行时无从检测,只能在 CI 静态守。
+        # 判据、air 哨兵豁免、以及三道「这道门自己不许空转」的自检,全部写在脚本头部注释里。
+        # 本地同一条代码路径:bash .github/policy/collision-hardcode-guard.sh
+        run: bash .github/policy/collision-hardcode-guard.sh
+
   cargo:
     name: Cargo workspace
     runs-on: ubuntu-latest
