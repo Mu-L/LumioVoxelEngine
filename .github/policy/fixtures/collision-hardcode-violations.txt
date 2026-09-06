@@ -1,0 +1,26 @@
+阳性样本 —— collision-hardcode-guard.sh 的自检 2 要求:下面每一条判据都至少命中这里一行。
+某条正则被写坏、或 runner 的 ERE 不把 \b 当词边界,这里就会零命中,守卫当场红,
+而不是在真正的物理实现上安静地永远放行。本文件不参与编译,也不在守卫扫描面内。
+
+判据 1 —— 把块身份与写死的非零编号比:
+    if block_id.block_type().raw() == 12 { return CellVisit::Empty; }
+    if block_id.block_type().raw() == 0x2A { return CellVisit::Empty; }
+
+判据 2 —— 把块身份与具名常量比。这一行就是契约 invalidCase
+physics_hardcodes_liquid_passability(「物理实现里写死『BlockType 是水就不阻挡』」)的原形:
+    if block.block_type().raw() == WATER_ID { return CellVisit::Empty; }
+
+判据 3 —— 对块身份做 match 分派:
+    match block_id.block_type().raw() {
+
+判据 4 —— 在物理面里现造一个具体 BlockType(只可能是为了跟它比):
+    if block_type == BlockType::new(LAVA_ID).unwrap() { return CellVisit::Empty; }
+
+判据 5 —— 点名一个具体方块的关联常量:
+    if block_type == BlockType::COBWEB { return CellVisit::Empty; }
+
+词汇判据 —— 具体方块名写进引擎物理面:
+    let magma_is_passable = true;
+
+词汇判据 · CamelCase 拼接:
+    struct LavaFlowOverride;
