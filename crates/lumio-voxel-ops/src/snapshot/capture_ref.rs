@@ -2,9 +2,8 @@
 
 #![forbid(unsafe_code)]
 
-use super::stable;
 use lumio_voxel_domain::publication::{PublishedReadView, PublishedStateRoot};
-use lumio_voxel_domain::revision::{GeneratedRevisionStamp, ReadViewLease, RevisionPin};
+use lumio_voxel_domain::revision::{ReadViewLease, RevisionPin, RevisionStamp};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -20,7 +19,7 @@ impl CaptureError {
 
     pub(super) fn invalid_handle() -> Self {
         Self {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
         }
     }
 }
@@ -52,7 +51,7 @@ pub enum PinOrLease {
 }
 
 impl PinOrLease {
-    fn stamp(&self) -> &GeneratedRevisionStamp {
+    fn stamp(&self) -> &RevisionStamp {
         match self {
             Self::Pin(pin) => pin.stamp(),
             Self::Lease(lease) => lease.stamp(),
@@ -74,7 +73,7 @@ impl From<ReadViewLease> for PinOrLease {
 
 /// Background encode reads a capture only through this port.
 pub trait CaptureReadPort {
-    fn stamp(&self) -> &GeneratedRevisionStamp;
+    fn stamp(&self) -> &RevisionStamp;
     fn root_identity(&self) -> [u8; 32];
     fn world_id(&self) -> &str;
     fn context_id(&self) -> &str;
@@ -97,8 +96,6 @@ impl VoxelCaptureRef {
         pin_or_lease: PinOrLease,
         cut_evidence: CutEvidence,
     ) -> Result<Self, CaptureError> {
-        let _ = super::manifest_adapter::header_schema();
-        let _ = super::manifest_adapter::payload_schema();
         validate_evidence(view, &pin_or_lease, &cut_evidence)?;
         Ok(Self {
             root: view.root_arc(),
@@ -107,7 +104,7 @@ impl VoxelCaptureRef {
         })
     }
 
-    pub fn stamp(&self) -> &GeneratedRevisionStamp {
+    pub fn stamp(&self) -> &RevisionStamp {
         self.root.stamp()
     }
 
@@ -139,13 +136,13 @@ impl VoxelCaptureRef {
         &self.root
     }
 
-    pub fn pin_stamp(&self) -> &GeneratedRevisionStamp {
+    pub fn pin_stamp(&self) -> &RevisionStamp {
         self.pin.stamp()
     }
 }
 
 impl CaptureReadPort for VoxelCaptureRef {
-    fn stamp(&self) -> &GeneratedRevisionStamp {
+    fn stamp(&self) -> &RevisionStamp {
         VoxelCaptureRef::stamp(self)
     }
 

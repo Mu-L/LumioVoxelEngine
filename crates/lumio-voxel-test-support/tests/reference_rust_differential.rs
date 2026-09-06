@@ -33,22 +33,6 @@ const EXPECTED_WORLD_REVISIONS: [u64; 11] = [1, 1, 1, 1, 1, 1, 2, 2, 2, 4, 4];
 const EXPECTED_GENERATIONS: [u64; 11] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2];
 const EXPECTED_STAMP_GENERATIONS: [u64; 11] = [1; 11];
 const EXPECTED_PUBLICATION_EPOCHS: [u64; 11] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 5, 5];
-const EXPECTED_PROVENANCE: [(&str, &str); 5] = [
-    ("architectureBaselineId", "LGE-V1.4-2026-08-27"),
-    ("voxelHead", "61cb864978dedfe9bdf7b687fea08660b31469f1"),
-    (
-        "architectureMirrorSha256",
-        "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0",
-    ),
-    (
-        "v13DecisionGatesSha256",
-        "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2",
-    ),
-    (
-        "blueprintSha256",
-        "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa",
-    ),
-];
 const EXPECTED_CONFIG_HASH: &str =
     "4fd5f112e0d73ff0a043f34bed1804c8ae2b261215d598a251e921039faca1f4";
 
@@ -147,16 +131,6 @@ fn reference_and_rust_execute_shared_canonical_vectors() {
             .all(|section| section.section_revision.is_some() || section.presence.is_none())
     );
     for observation in observations {
-        assert_eq!(observation.baseline_id, "LGE-V1.4-2026-08-27");
-        assert_eq!(observation.schema_epoch, 1);
-        assert_eq!(
-            observation
-                .gate_source_hashes
-                .iter()
-                .map(|(key, value)| (key.as_str(), value.as_str()))
-                .collect::<Vec<_>>(),
-            EXPECTED_PROVENANCE
-        );
         assert_eq!(observation.config_hash.len(), 64);
     }
     assert_eq!(

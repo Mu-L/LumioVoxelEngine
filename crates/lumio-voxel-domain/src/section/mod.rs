@@ -34,7 +34,7 @@ pub use dirty::{
 };
 pub use dispatch::{SectionDeliveryState, SectionDispatch};
 pub use modification_layer::RoomModificationLayer;
-pub use payload::{SectionPage, SectionPayload};
+pub use payload::{SECTION_PAGE_SCHEMA, SectionPage, SectionPayload};
 pub use replacement::{ReplacementSet, SectionReplacement};
 pub use slot::SectionSlot;
 
@@ -48,7 +48,6 @@ pub trait SectionPresenceGuard {
     fn validate_presence(&self, section_id: &str, presence: &str) -> Result<(), &'static str>;
 }
 
-use lumio_voxel_contracts::STABLE_ERROR_IDS;
 use lumio_voxel_contracts::voxel_world as vw;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +56,7 @@ pub enum SectionError {
     Key(KeyError),
     /// 页载荷摘要在解释之前就对不上(契约 `page.digest-before-interpretation`)。
     SectionDigestMismatch { error_id: &'static str },
-    /// 引擎通用的句柄 / 状态非法。活契约没有对应错误码,沿用废弃镜像的稳定 id。
+    /// 引擎通用的句柄 / 状态非法。活契约没有对应错误码,由本仓自行命名。
     InvalidHandle { error_id: &'static str },
     /// Section 当前不可提供。缺块永不等于空气。
     SectionUnavailable { error_id: &'static str },
@@ -84,7 +83,7 @@ impl SectionError {
 
     fn invalid_handle() -> Self {
         Self::InvalidHandle {
-            error_id: stable_error("InvalidHandle"),
+            error_id: "InvalidHandle",
         }
     }
 
@@ -114,14 +113,6 @@ impl std::fmt::Display for SectionError {
 }
 
 impl std::error::Error for SectionError {}
-
-fn stable_error(id: &'static str) -> &'static str {
-    STABLE_ERROR_IDS
-        .iter()
-        .copied()
-        .find(|candidate| *candidate == id)
-        .expect("mapped error id must exist in the frozen mirror's STABLE_ERROR_IDS")
-}
 
 fn contract_error(id: &'static str) -> &'static str {
     vw::intern_error_code(id).expect("mapped error id must exist in the contract errorCodes")

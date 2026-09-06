@@ -7,12 +7,12 @@
 
 use super::QueryError;
 use lumio_voxel_domain::key::SectionId;
-use lumio_voxel_domain::revision::GeneratedRevisionStamp;
+use lumio_voxel_domain::revision::RevisionStamp;
 use std::collections::BTreeSet;
 
 /// Generated `voxel-query` request. Field names wrap `queryId`, `worldId`, `context`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GeneratedVoxelQueryRequest {
+pub struct VoxelQueryRequest {
     /// Generated field `queryId`.
     pub query_id: String,
     /// Generated field `worldId`.
@@ -26,8 +26,8 @@ pub struct GeneratedVoxelQueryRequest {
 }
 
 pub(super) fn validate_request(
-    request: &GeneratedVoxelQueryRequest,
-    stamp: &GeneratedRevisionStamp,
+    request: &VoxelQueryRequest,
+    stamp: &RevisionStamp,
 ) -> Result<(), QueryError> {
     if request.cancel {
         return Err(QueryError::invalid_handle());

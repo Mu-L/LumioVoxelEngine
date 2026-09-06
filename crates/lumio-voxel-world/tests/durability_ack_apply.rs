@@ -1,14 +1,13 @@
 //! R-00137: DurabilityAck is the only Dirty-clear path (coverage-checked root swap).
 
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, SCHEMA_IDS, is_stable_error_id, sha256};
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_domain::block::{BlockId, CellOffset};
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::PublishedStateRoot;
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, REVISION_STAMP_SCHEMA, RevisionAllocator, WorldRevision,
+    REVISION_STAMP_SCHEMA, RevisionAllocator, RevisionStamp, WorldRevision,
 };
 use lumio_voxel_domain::section::{
     CoveredSectionAck, DirtyFrontier, DurabilityAckContext, SectionDeltaBuilder,
@@ -35,45 +34,15 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 fn approved_snapshot(label: &str) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|g| {
-            (
-                (*g).to_string(),
-                hex32(&sha256(format!("approved-{g}").as_bytes())),
-            )
-        })
-        .collect();
-    let ev: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|g| DecisionEvidence {
-            gate_id: (*g).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*g].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &ev).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn origin_of(world: &VoxelWorld, request_id: &str) -> OriginToken {
@@ -190,13 +159,6 @@ fn assert_lane_free(world: &mut VoxelWorld) {
     drop(lease);
 }
 
-fn assert_stable_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
-}
-
 fn seed_ready(world: &VoxelWorld, sections: &[&str]) {
     let view = world.state_view();
     let before = world.publication_authority().capture();
@@ -209,7 +171,7 @@ fn seed_ready(world: &VoxelWorld, sections: &[&str]) {
             .expect("canonical section id");
         section_revision_set.insert((*id).to_string(), next);
     }
-    let stamp = GeneratedRevisionStamp {
+    let stamp = RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: view.world_id().to_string(),
         context_id: view.world_context_id().to_string(),
@@ -336,7 +298,6 @@ fn walk_rs(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 
 #[test]
 fn covering_ack_clears_only_that_section_and_changes_root() {
-    assert!(SCHEMA_IDS.contains(&"voxel-durability-ack"));
     let mut world = running_world_with_dirty("r00137-happy", &["s:0:0:0", "s:1:0:0"]);
     let covered = latest_dirty(&world, "s:0:0:0").expect("dirty after commit");
     let other = latest_dirty(&world, "s:1:0:0").expect("other dirty after commit");
@@ -399,7 +360,6 @@ fn wrong_world_id_or_generation_keeps_identity() {
     wrong_world.world_id = "world-other".to_string();
     let err = apply_durability_ack(&mut world, wrong_world).expect_err("wrong world");
     assert_eq!(err.error_id(), "SessionMismatch");
-    assert_stable_error(err.error_id());
     assert_eq!(identity_of(&world), before);
     assert_eq!(latest_dirty(&world, "s:0:0:0"), dirty_before);
     assert_lane_free(&mut world);
@@ -408,7 +368,6 @@ fn wrong_world_id_or_generation_keeps_identity() {
     wrong_generation.context.generation = world.state_view().instance_generation() + 1;
     let err = apply_durability_ack(&mut world, wrong_generation).expect_err("stale generation");
     assert_eq!(err.error_id(), "StaleEpoch");
-    assert_stable_error(err.error_id());
     assert_eq!(identity_of(&world), before);
     assert_eq!(latest_dirty(&world, "s:0:0:0"), dirty_before);
     assert_lane_free(&mut world);
@@ -423,7 +382,6 @@ fn future_covered_world_revision_is_rejected_before_clear() {
     ack.covered_world_revision = current_world_revision(&world) + 1;
     let err = apply_durability_ack(&mut world, ack).expect_err("future cut");
     assert_eq!(err.error_id(), "EvidenceDigestMismatch");
-    assert_stable_error(err.error_id());
     assert_eq!(identity_of(&world), before);
     assert!(latest_dirty(&world, "s:0:0:0").is_some());
     assert_lane_free(&mut world);

@@ -4,18 +4,18 @@
 
 use super::section_access::SectionAccessResult;
 use lumio_voxel_contracts::Hash256;
-use lumio_voxel_domain::revision::GeneratedRevisionStamp;
+use lumio_voxel_domain::revision::RevisionStamp;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryEvidence {
-    read_stamp: GeneratedRevisionStamp,
+    read_stamp: RevisionStamp,
     budget_used: usize,
     missing_states: Vec<SectionAccessResult>,
     plan_hash: Hash256,
 }
 
 impl QueryEvidence {
-    pub fn read_stamp(&self) -> &GeneratedRevisionStamp {
+    pub fn read_stamp(&self) -> &RevisionStamp {
         &self.read_stamp
     }
 
@@ -33,12 +33,12 @@ impl QueryEvidence {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GeneratedVoxelQueryOutcome {
+pub struct VoxelQueryOutcome {
     items: Vec<SectionAccessResult>,
     evidence: QueryEvidence,
 }
 
-impl GeneratedVoxelQueryOutcome {
+impl VoxelQueryOutcome {
     pub fn items(&self) -> &[SectionAccessResult] {
         &self.items
     }
@@ -50,16 +50,16 @@ impl GeneratedVoxelQueryOutcome {
 
 pub(super) fn assemble(
     items: Vec<SectionAccessResult>,
-    read_stamp: GeneratedRevisionStamp,
+    read_stamp: RevisionStamp,
     budget_used: usize,
     plan_hash: Hash256,
-) -> GeneratedVoxelQueryOutcome {
+) -> VoxelQueryOutcome {
     let missing_states = items
         .iter()
         .filter(|item| item.presence() != "Ready")
         .cloned()
         .collect();
-    GeneratedVoxelQueryOutcome {
+    VoxelQueryOutcome {
         items,
         evidence: QueryEvidence {
             read_stamp,

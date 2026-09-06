@@ -1,8 +1,7 @@
 //! Txn receipt ledger. Does not publish sections and does not hold a directory root.
 
-use super::fingerprint::{MUTATION_RECEIPT_SCHEMA, MutationRequest, canonical_fingerprint};
+use super::fingerprint::{MutationRequest, canonical_fingerprint};
 use super::reservation::MutationReservation;
-use lumio_voxel_contracts::{SCHEMA_IDS, STABLE_ERROR_IDS};
 use lumio_voxel_domain::config_snapshot::VoxelConfigSnapshot;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -61,28 +60,28 @@ impl LedgerError {
 
     fn conflict() -> Self {
         Self {
-            error_id: stable("RevisionConflict"),
+            error_id: "RevisionConflict",
             disposition: Some(ReplayDisposition::Conflict),
         }
     }
 
     fn budget() -> Self {
         Self {
-            error_id: stable("BudgetExceeded"),
+            error_id: "BudgetExceeded",
             disposition: None,
         }
     }
 
     fn invalid_handle() -> Self {
         Self {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
             disposition: None,
         }
     }
 
     fn session_mismatch() -> Self {
         Self {
-            error_id: stable("SessionMismatch"),
+            error_id: "SessionMismatch",
             disposition: None,
         }
     }
@@ -110,7 +109,6 @@ impl ReceiptLedger {
         snapshot: Arc<VoxelConfigSnapshot>,
         max_entries: usize,
     ) -> Result<Self, LedgerError> {
-        debug_assert!(SCHEMA_IDS.contains(&MUTATION_RECEIPT_SCHEMA));
         if max_entries == 0 {
             return Err(LedgerError::budget());
         }
@@ -323,9 +321,4 @@ impl ReceiptLedger {
             self.bound_generation = Some(request.generation);
         }
     }
-}
-
-fn stable(id: &'static str) -> &'static str {
-    debug_assert!(STABLE_ERROR_IDS.contains(&id));
-    id
 }

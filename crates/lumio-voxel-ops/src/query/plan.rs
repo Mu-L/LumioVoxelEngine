@@ -3,13 +3,13 @@
 #![forbid(unsafe_code)]
 
 use super::budget;
-use super::validate::{GeneratedVoxelQueryRequest, canonicalize_sections, validate_request};
-use super::{QUERY_SCHEMA, QueryError, query_schema};
+use super::validate::{VoxelQueryRequest, canonicalize_sections, validate_request};
+use super::{QUERY_SCHEMA, QueryError};
 use crate::canonical::{CanonicalObject, CanonicalValue};
 use lumio_voxel_contracts::{Hash256, sha256};
 use lumio_voxel_domain::config_snapshot::VoxelConfigSnapshot;
 use lumio_voxel_domain::publication::PublishedReadView;
-use lumio_voxel_domain::revision::GeneratedRevisionStamp;
+use lumio_voxel_domain::revision::RevisionStamp;
 use std::sync::Arc;
 
 pub struct QueryPlanner {
@@ -21,7 +21,7 @@ pub struct QueryPlanner {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryPlan {
     canonical_sections: Vec<String>,
-    read_stamp: GeneratedRevisionStamp,
+    read_stamp: RevisionStamp,
     budget: usize,
     config_hash: String,
     cancel_token: String,
@@ -36,7 +36,7 @@ impl QueryPlanner {
         snapshot: Arc<VoxelConfigSnapshot>,
         max_sections: usize,
     ) -> Result<Self, QueryError> {
-        let _ = query_schema();
+        let _ = QUERY_SCHEMA;
         if max_sections == 0 {
             return Err(QueryError::budget_exceeded());
         }
@@ -52,7 +52,7 @@ impl QueryPlanner {
 
     pub fn plan(
         &self,
-        request: &GeneratedVoxelQueryRequest,
+        request: &VoxelQueryRequest,
         view: &PublishedReadView,
         config: &VoxelConfigSnapshot,
     ) -> Result<QueryPlan, QueryError> {
@@ -90,7 +90,7 @@ impl QueryPlan {
         &self.canonical_sections
     }
 
-    pub fn read_stamp(&self) -> &GeneratedRevisionStamp {
+    pub fn read_stamp(&self) -> &RevisionStamp {
         &self.read_stamp
     }
 
@@ -112,8 +112,8 @@ impl QueryPlan {
 }
 
 fn compute_plan_hash(
-    request: &GeneratedVoxelQueryRequest,
-    stamp: &GeneratedRevisionStamp,
+    request: &VoxelQueryRequest,
+    stamp: &RevisionStamp,
     sections: &[String],
     config_hash: &str,
     budget: usize,

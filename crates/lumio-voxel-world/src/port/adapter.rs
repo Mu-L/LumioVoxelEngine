@@ -8,25 +8,28 @@ use crate::world::{
     RuntimeSnapshotCut, VoxelWorld, WorldCommand, WorldDescriptor, WorldEventSink, WorldRouter,
     WorldShutdown,
 };
-use lumio_voxel_contracts::{BINDINGS, SCHEMA_IDS};
 use lumio_voxel_domain::config_snapshot::VoxelConfigSnapshot;
 use lumio_voxel_ops::async_support::{OriginEnvelope, OriginToken};
 use lumio_voxel_ops::mutation::{
-    GeneratedMutationReceipt, MutationRequest, PreparedMutation, ReceiptStatus,
+    MutationReceipt, MutationRequest, PreparedMutation, ReceiptStatus,
 };
-use lumio_voxel_ops::query::{GeneratedVoxelQueryOutcome, GeneratedVoxelQueryRequest};
+use lumio_voxel_ops::query::{VoxelQueryOutcome, VoxelQueryRequest};
 use lumio_voxel_ops::snapshot::{SealedRestoreCandidate, VoxelCaptureRef};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-const PORT_SCHEMA: &str = "voxel-world-port";
-const PORT_RUST_TYPE: &str = "VoxelWorldPort";
+/// `voxel-world-port` schema id. A `static`, not a `const`: consumers compare the
+/// adapter's `schema_id()` by pointer to prove there is exactly one materialization,
+/// and a `const` would be inlined once per crate (ADR 0008 的同一条理由)。
+pub static PORT_SCHEMA: &str = "voxel-world-port";
+/// Rust type name this port binds to. Same `static` reasoning as [`PORT_SCHEMA`].
+pub static PORT_RUST_TYPE: &str = "VoxelWorldPort";
 
-/// Method names frozen by the generated `voxel-world-port` contract.
+/// Method names frozen by the `voxel-world-port` schema.
 ///
 /// This table is a conformance witness only; it does not define a second
 /// schema or serializer. The source of truth remains the Architecture artifact.
-pub const GENERATED_PORT_METHODS: &[&str; 11] = &[
+pub const PORT_METHODS: &[&str; 11] = &[
     "createWorld",
     "query",
     "prepareMutation",
@@ -41,9 +44,7 @@ pub const GENERATED_PORT_METHODS: &[&str; 11] = &[
 ];
 
 /// Compatibility alias for callers that use the shorter Port terminology.
-pub const PORT_METHODS: &[&str; 11] = GENERATED_PORT_METHODS;
-
-/// Mutation status projection from the generated receipt contract.
+/// Mutation status projection from the mutation receipt shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MutationStatus {
     Unknown,
@@ -83,11 +84,11 @@ pub struct PortEvidence {
 }
 
 /// Total adapter over one `VoxelWorld`. No extra interior mutability and no callbacks.
-pub struct GeneratedVoxelWorldPortAdapter<'a> {
+pub struct VoxelWorldPortAdapter<'a> {
     world: &'a mut VoxelWorld,
 }
 
-impl<'a> GeneratedVoxelWorldPortAdapter<'a> {
+impl<'a> VoxelWorldPortAdapter<'a> {
     /// Generated `createWorld` entry point. The returned world is owned by the
     /// caller and must subsequently be accessed through this adapter surface.
     pub fn create_world(
@@ -98,19 +99,17 @@ impl<'a> GeneratedVoxelWorldPortAdapter<'a> {
     }
 
     pub fn new(world: &'a mut VoxelWorld) -> Self {
-        let _ = intern_schema();
-        let _ = intern_binding();
         Self { world }
     }
 
     pub fn schema_id(&self) -> &'static str {
-        intern_schema()
+        PORT_SCHEMA
     }
 
     pub fn evidence(&self) -> PortEvidence {
         PortEvidence {
-            schema_id: intern_schema(),
-            binding_rust_type: intern_binding(),
+            schema_id: PORT_SCHEMA,
+            binding_rust_type: PORT_RUST_TYPE,
         }
     }
 
@@ -123,8 +122,8 @@ impl<'a> GeneratedVoxelWorldPortAdapter<'a> {
 
     pub fn query(
         &mut self,
-        envelope: OriginEnvelope<GeneratedVoxelQueryRequest>,
-    ) -> Result<OriginEnvelope<GeneratedVoxelQueryOutcome>, PortError> {
+        envelope: OriginEnvelope<VoxelQueryRequest>,
+    ) -> Result<OriginEnvelope<VoxelQueryOutcome>, PortError> {
         WorldRouter::query(self.world, envelope).map_err(PortError::from)
     }
 
@@ -138,7 +137,7 @@ impl<'a> GeneratedVoxelWorldPortAdapter<'a> {
     pub fn commit(
         &mut self,
         envelope: OriginEnvelope<PreparedMutation>,
-    ) -> Result<OriginEnvelope<GeneratedMutationReceipt>, PortError> {
+    ) -> Result<OriginEnvelope<MutationReceipt>, PortError> {
         WorldRouter::commit(self.world, envelope).map_err(PortError::from)
     }
 
@@ -223,20 +222,4 @@ impl<'a> GeneratedVoxelWorldPortAdapter<'a> {
         WorldShutdown::finalize(self.world, sink).map_err(PortError::from)?;
         Ok(())
     }
-}
-
-fn intern_schema() -> &'static str {
-    SCHEMA_IDS
-        .iter()
-        .copied()
-        .find(|id| *id == PORT_SCHEMA)
-        .expect("voxel-world-port must exist in generated SCHEMA_IDS")
-}
-
-fn intern_binding() -> &'static str {
-    BINDINGS
-        .iter()
-        .find(|binding| binding.schema_id == PORT_SCHEMA && binding.rust_type == PORT_RUST_TYPE)
-        .map(|binding| binding.rust_type)
-        .expect("generated BINDINGS must intern rust_type VoxelWorldPort")
 }

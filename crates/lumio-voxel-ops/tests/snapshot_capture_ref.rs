@@ -2,16 +2,15 @@
 
 #![cfg(feature = "snapshot")]
 
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, SCHEMA_IDS, is_stable_error_id, sha256};
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::{
     PublicationAuthority, PublishedReadView, PublishedStateRoot,
 };
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, PinRegistry, REVISION_STAMP_SCHEMA, RevisionAllocator, WorldRevision,
+    PinRegistry, REVISION_STAMP_SCHEMA, RevisionAllocator, RevisionStamp, WorldRevision,
 };
 use lumio_voxel_domain::section::{
     DirtyFrontier, SectionDeltaBuilder, SectionDirectoryBuilder, SectionPage, SectionPayload,
@@ -39,46 +38,16 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 fn approved_snapshot(label: &str, capabilities: &[&str]) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|g| {
-            (
-                (*g).to_string(),
-                hex32(&sha256(format!("approved-{g}").as_bytes())),
-            )
-        })
-        .collect();
-    let ev: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|g| DecisionEvidence {
-            gate_id: (*g).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*g].clone(),
-        })
-        .collect();
     let names: Vec<String> = capabilities.iter().map(|s| (*s).to_string()).collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(names.clone()),
+        host_capability: HostCapabilitySet::from_names(names.clone()),
         start_capabilities: names,
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &ev).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn world_rev(n: u64) -> WorldRevision {
@@ -90,13 +59,8 @@ fn world_rev(n: u64) -> WorldRevision {
     reserved.finalize().unwrap()
 }
 
-fn stamp(
-    world_id: &str,
-    context: &str,
-    generation: u64,
-    world_revision: u64,
-) -> GeneratedRevisionStamp {
-    GeneratedRevisionStamp {
+fn stamp(world_id: &str, context: &str, generation: u64, world_revision: u64) -> RevisionStamp {
+    RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: world_id.to_string(),
         context_id: context.to_string(),
@@ -193,19 +157,10 @@ fn publish_later(auth: &PublicationAuthority, view: &PublishedReadView, payload:
         .expect("publish later root");
 }
 
-fn assert_stable_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
-}
-
 fn assert_send_sync<T: Send + Sync>() {}
 
 #[test]
 fn schemas_are_generated_members() {
-    assert!(SCHEMA_IDS.contains(&SNAPSHOT_HEADER_SCHEMA));
-    assert!(SCHEMA_IDS.contains(&SNAPSHOT_PAYLOAD_SCHEMA));
     assert_eq!(SNAPSHOT_HEADER_SCHEMA, "snapshot-header");
     assert_eq!(SNAPSHOT_PAYLOAD_SCHEMA, "voxel-snapshot-payload");
     assert_send_sync::<VoxelCaptureRef>();
@@ -401,39 +356,33 @@ fn cancel_buffer_limit_and_bad_input_fail_this_operation_only() {
     )
     .expect_err("foreign lease");
     assert_eq!(bad_pin.error_id(), "InvalidHandle");
-    assert_stable_error(bad_pin.error_id());
 
     let mut empty = cut_evidence(&view, snap.config_hash());
     empty.world_id.clear();
     let bad_empty = VoxelCaptureRef::new(&view, pin_of(&view), empty).expect_err("empty world");
     assert_eq!(bad_empty.error_id(), "InvalidHandle");
-    assert_stable_error(bad_empty.error_id());
 
     let mut bad_hash = cut_evidence(&view, snap.config_hash());
     bad_hash.config_hash = "not-a-hash".to_string();
     let bad_cfg = VoxelCaptureRef::new(&view, pin_of(&view), bad_hash).expect_err("bad hash");
     assert_eq!(bad_cfg.error_id(), "InvalidHandle");
-    assert_stable_error(bad_cfg.error_id());
 
     let mut mismatch = cut_evidence(&view, snap.config_hash());
     mismatch.artifact_hash = [7u8; 32];
     let bad_art = VoxelCaptureRef::new(&view, pin_of(&view), mismatch).expect_err("bad artifact");
     assert_eq!(bad_art.error_id(), "InvalidHandle");
-    assert_stable_error(bad_art.error_id());
 
     let capture = capture_of(&view, snap.config_hash()).expect("live capture after rejects");
 
     let mut tiny = MemoryCaptureWriter::new(1);
     let over = encode_capture(&capture, &mut tiny).expect_err("buffer limit");
     assert_eq!(over.error_id(), "BudgetExceeded");
-    assert_stable_error(over.error_id());
     assert!(tiny.as_slice().is_empty());
 
     let mut cancelled = MemoryCaptureWriter::new(8192);
     cancelled.cancel();
     let cancel_err: SnapshotError = encode_capture(&capture, &mut cancelled).expect_err("cancel");
     assert_eq!(cancel_err.error_id(), "LoaderCancelled");
-    assert_stable_error(cancel_err.error_id());
     assert!(cancelled.as_slice().is_empty());
 
     let mut ok = MemoryCaptureWriter::new(8192);

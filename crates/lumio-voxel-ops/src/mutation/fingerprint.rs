@@ -1,10 +1,10 @@
 //! Canonical request fingerprint over the Voxel-local canonical object encoding.
 
 use crate::canonical::{CanonicalObject, DuplicateMember};
-use lumio_voxel_contracts::{Hash256, SCHEMA_IDS, sha256};
+use lumio_voxel_contracts::{Hash256, sha256};
 use lumio_voxel_domain::block::{BlockId, CellOffset};
 
-/// Generated schema this mapping wraps. Must stay in `SCHEMA_IDS`.
+/// Schema id this mapping wraps. Frozen wire identity, not a layering name.
 pub const MUTATION_RECEIPT_SCHEMA: &str = "voxel-mutation-receipt";
 
 /// Member naming the encoding the fingerprint was taken over.
@@ -120,7 +120,6 @@ impl RequestFingerprint {
 pub fn canonical_fingerprint(
     request: &MutationRequest,
 ) -> Result<RequestFingerprint, DuplicateMember> {
-    debug_assert!(SCHEMA_IDS.contains(&MUTATION_RECEIPT_SCHEMA));
     let mut object = CanonicalObject::new();
     object.insert_text("entries", encode_entries(&request.entries))?;
     object.insert_text(CANONICAL_FORM_FIELD, CANONICAL_FORM_ID)?;

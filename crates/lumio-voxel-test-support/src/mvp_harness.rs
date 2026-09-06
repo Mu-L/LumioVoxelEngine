@@ -1,6 +1,6 @@
 //! MVP vertical slice: create→query→prepare→commit→duplicate replay→capture→encode→restore→durability ack→close.
 //!
-//! Chain traffic goes through `GeneratedVoxelWorldPortAdapter`. Four-state / Ready
+//! Chain traffic goes through `VoxelWorldPortAdapter`. Four-state / Ready
 //! directory fixtures still use the copied B2 `PublicationAuthority` helpers because
 //! adapter mutation can only overlay `Ready` slots.
 
@@ -9,20 +9,17 @@
 use crate::b0_harness::{B0VerificationReport, run_b0_matrix};
 use crate::b2_harness::{B2VerificationReport, run_b2_matrix};
 use crate::deterministic_executor::{DeterministicExecutor, Schedule};
-use crate::reference_harness::GeneratedVoxelOperation;
+use crate::reference_harness::VoxelOperation;
 use crate::workspace_root_from_manifest;
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_contracts::voxel_world::SECTION_PRESENCE;
-use lumio_voxel_contracts::{
-    BASELINE_ID, SCHEMA_EPOCH, SCHEMA_IDS, is_stable_error_id, sha256, verify_artifact_hashes,
-};
 use lumio_voxel_domain::block::{BlockId, CellOffset};
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::PublishedStateRoot;
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, REVISION_STAMP_SCHEMA, RevisionAllocator, WorldRevision,
+    REVISION_STAMP_SCHEMA, RevisionAllocator, RevisionStamp, WorldRevision,
 };
 use lumio_voxel_domain::section::{
     CoveredSectionAck, DirtyFrontier, DurabilityAckContext, SectionDeltaBuilder,
@@ -32,13 +29,13 @@ use lumio_voxel_domain::section::{
 use lumio_voxel_ops::SNAPSHOT_FEATURE;
 use lumio_voxel_ops::async_support::{APPLY_PHASES, OriginEnvelope, OriginToken};
 use lumio_voxel_ops::mutation::{
-    GeneratedMutationReceipt, MutationEntry, MutationRequest, PreparedMutation,
+    MutationEntry, MutationReceipt, MutationRequest, PreparedMutation,
 };
-use lumio_voxel_ops::query::{GeneratedVoxelQueryRequest, QUERY_SCHEMA};
+use lumio_voxel_ops::query::VoxelQueryRequest;
 use lumio_voxel_ops::snapshot::{
     MemoryCaptureWriter, RestorePreflight, RestoreShadowBuilder, VoxelCaptureRef, encode_capture,
 };
-use lumio_voxel_world::port::GeneratedVoxelWorldPortAdapter;
+use lumio_voxel_world::port::VoxelWorldPortAdapter;
 use lumio_voxel_world::world::{
     AckEvidence, RuntimeSnapshotCut, VoxelWorld, WorldCommand, WorldConfigAdapter, WorldDescriptor,
     WorldEventSink, intern_local_embedded_pair,
@@ -97,9 +94,7 @@ pub struct MvpReceipt {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MvpIntegrationReport {
-    pub baseline: &'static str,
     pub commit: String,
-    pub artifact_hashes: String,
     pub config_hash: String,
     pub steps: Vec<MvpStepResult>,
     pub receipts: Vec<MvpReceipt>,
@@ -116,7 +111,6 @@ impl MvpIntegrationReport {
         self.steps.len() == STEP_COUNT
             && self.steps.iter().all(|step| step.ok)
             && self.authority_identity != self.replica_identity
-            && !self.artifact_hashes.starts_with("verify_artifact_hashes:")
     }
 }
 
@@ -130,9 +124,7 @@ pub fn matrix_entry_points() -> (B0MatrixFn, B2MatrixFn) {
 
 pub fn run_mvp_vertical_slice() -> MvpIntegrationReport {
     let mut report = MvpIntegrationReport {
-        baseline: BASELINE_ID,
         commit: git_head(),
-        artifact_hashes: String::new(),
         config_hash: String::new(),
         steps: Vec::with_capacity(STEP_COUNT),
         receipts: Vec::new(),
@@ -152,20 +144,6 @@ pub fn run_mvp_vertical_slice() -> MvpIntegrationReport {
     match reference_trace() {
         Ok(hash) => report.trace_hash = hash,
         Err(err) => report.commands.push(format!("reference_trace: {err}")),
-    }
-
-    match verify_artifact_hashes() {
-        Ok(()) => {
-            let mut buf = Vec::new();
-            for id in SCHEMA_IDS {
-                buf.extend_from_slice(id.as_bytes());
-                buf.push(0);
-            }
-            report.artifact_hashes = hex32(&sha256(&buf));
-        }
-        Err(err) => {
-            report.artifact_hashes = format!("verify_artifact_hashes: {err}");
-        }
     }
 
     if let Err(err) = run_chain(&mut report) {
@@ -204,14 +182,14 @@ struct LiveSlice {
     snap: Arc<VoxelConfigSnapshot>,
     replica_identity: [u8; 32],
     mutation: Option<OriginEnvelope<MutationRequest>>,
-    original_receipt: Option<GeneratedMutationReceipt>,
+    original_receipt: Option<MutationReceipt>,
 }
 
 fn step_create(report: &mut MvpIntegrationReport) -> Result<LiveSlice, String> {
     if !SNAPSHOT_FEATURE {
         return Err("lumio-voxel-ops snapshot feature is off".into());
     }
-    let interned_schema = intern_schema("voxel-world-port")?;
+    let interned_schema = lumio_voxel_world::port::PORT_SCHEMA;
     let (authority_role, replica_role) = intern_local_embedded_pair("Authority", "Replica")
         .map_err(|err| format!("intern_local_embedded_pair: {}", err.error_id()))?;
     let snap = approved_snapshot("mvp-authority");
@@ -236,22 +214,22 @@ fn step_create(report: &mut MvpIntegrationReport) -> Result<LiveSlice, String> {
         return Err("worlds share instance generation".into());
     }
     let adapter_schema = {
-        let adapter = GeneratedVoxelWorldPortAdapter::new(&mut authority);
+        let adapter = VoxelWorldPortAdapter::new(&mut authority);
         adapter.schema_id()
     };
     if !std::ptr::eq(adapter_schema, interned_schema) {
-        return Err("adapter.schema_id is not interned SCHEMA_IDS".into());
+        return Err("adapter.schema_id is not the interned PORT_SCHEMA".into());
     }
     let replica_query = query_envelope(&replica, "q-replica", &["s:0:0:0"])?;
     let replica_items = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut replica);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut replica);
         adapter
             .query(replica_query)
             .map_err(|err| format!("replica query: {}", err.error_id()))?
     };
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::query Replica".into());
+        .push("VoxelWorldPortAdapter::query Replica".into());
     if replica_items.payload.items().len() != 1
         || replica_items.payload.items()[0].presence() != "Unchanged"
     {
@@ -276,7 +254,6 @@ fn step_create(report: &mut MvpIntegrationReport) -> Result<LiveSlice, String> {
 }
 
 fn step_query(live: &mut LiveSlice, report: &mut MvpIntegrationReport) -> Result<String, String> {
-    require_schema(QUERY_SCHEMA)?;
     if SECTION_PRESENCE != ["Ready", "Unchanged", "Pending", "Unavailable"] {
         return Err(format!("SECTION_PRESENCE {SECTION_PRESENCE:?}"));
     }
@@ -288,14 +265,12 @@ fn step_query(live: &mut LiveSlice, report: &mut MvpIntegrationReport) -> Result
     let before = identity_of(&live.authority);
     let envelope = query_envelope(&live.authority, "q-mvp-four", &FOUR_STATE_IDS)?;
     let outcome = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .query(envelope)
             .map_err(|err| format!("adapter query: {}", err.error_id()))?
     };
-    report
-        .commands
-        .push("GeneratedVoxelWorldPortAdapter::query".into());
+    report.commands.push("VoxelWorldPortAdapter::query".into());
     if identity_of(&live.authority) != before {
         return Err("query mutated the published identity".into());
     }
@@ -322,10 +297,8 @@ fn step_query(live: &mut LiveSlice, report: &mut MvpIntegrationReport) -> Result
             return Err(format!("{} ready flag", item.section_id()));
         }
         if ready {
-            let schema = item
-                .schema_id()
+            item.schema_id()
                 .ok_or_else(|| "Ready missing schema_id".to_string())?;
-            require_schema(schema)?;
         } else if item.schema_id().is_some() {
             return Err(format!("{} leaked schema_id", item.section_id()));
         }
@@ -346,14 +319,14 @@ fn step_prepare(
     )?;
     live.mutation = Some(envelope.clone());
     let prepared = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .prepare_mutation(envelope)
             .map_err(|err| format!("adapter prepare: {}", err.error_id()))?
     };
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::prepare_mutation".into());
+        .push("VoxelWorldPortAdapter::prepare_mutation".into());
     if identity_of(&live.authority) != before {
         return Err("prepare published".into());
     }
@@ -370,14 +343,12 @@ fn step_commit(
 ) -> Result<String, String> {
     let before = identity_of(&live.authority);
     let receipt = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .commit(prepared)
             .map_err(|err| format!("adapter commit: {}", err.error_id()))?
     };
-    report
-        .commands
-        .push("GeneratedVoxelWorldPortAdapter::commit".into());
+    report.commands.push("VoxelWorldPortAdapter::commit".into());
     push_receipt(report, &receipt.payload);
     live.original_receipt = Some(receipt.payload.clone());
     let after = identity_of(&live.authority);
@@ -407,23 +378,23 @@ fn step_duplicate_replay(
         .ok_or_else(|| "duplicate replay missing original receipt".to_string())?;
     let before = identity_of(&live.authority);
     let prepared = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .prepare_mutation(dup_env)
             .map_err(|err| format!("duplicate prepare: {}", err.error_id()))?
     };
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::prepare_mutation duplicate".into());
+        .push("VoxelWorldPortAdapter::prepare_mutation duplicate".into());
     let replayed = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .commit(prepared)
             .map_err(|err| format!("duplicate commit: {}", err.error_id()))?
     };
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::commit duplicate TxnId".into());
+        .push("VoxelWorldPortAdapter::commit duplicate TxnId".into());
     if replayed.payload.txn_id != original.txn_id
         || replayed.payload.evidence.txn_id != original.evidence.txn_id
     {
@@ -447,14 +418,14 @@ fn step_capture(
     let id_before = identity_of(&live.authority);
     let cut = RuntimeSnapshotCut::from_live(&live.authority, "cut-mvp");
     let (captured, evidence) = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .capture(&cut)
             .map_err(|err| format!("adapter capture: {}", err.error_id()))?
     };
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::capture".into());
+        .push("VoxelWorldPortAdapter::capture".into());
     if !evidence.barrier_released {
         return Err("adapter capture held CaptureCut".into());
     }
@@ -519,14 +490,14 @@ fn step_restore(
         return Err("shadow hash mismatch".into());
     }
     let receipt = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .restore(candidate)
             .map_err(|err| format!("adapter restore: {}", err.error_id()))?
     };
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::restore".into());
+        .push("VoxelWorldPortAdapter::restore".into());
     if receipt.old_root() != before || receipt.new_root() == before {
         return Err("restore did not swap identity".into());
     }
@@ -542,7 +513,6 @@ fn step_durability_ack(
     live: &mut LiveSlice,
     report: &mut MvpIntegrationReport,
 ) -> Result<String, String> {
-    require_schema("voxel-durability-ack")?;
     // RestoreShadowBuilder publishes an empty dirty frontier; re-seed Ready then mutate.
     seed_ready(&live.authority, &["s:0:0:0"])?;
     report
@@ -554,7 +524,7 @@ fn step_durability_ack(
         &[("s:0:0:0/cell-1", "mvp-ack-edit")],
     )?;
     let dirty_receipt = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         let prepared = adapter
             .prepare_mutation(dirty_env)
             .map_err(|err| format!("ack prepare: {}", err.error_id()))?;
@@ -564,7 +534,7 @@ fn step_durability_ack(
     };
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::prepare_mutation/commit (ack dirty)".into());
+        .push("VoxelWorldPortAdapter::prepare_mutation/commit (ack dirty)".into());
     push_receipt(report, &dirty_receipt.payload);
     let latest =
         latest_dirty(&live.authority, "s:0:0:0")?.ok_or_else(|| "section not dirty".to_string())?;
@@ -574,14 +544,14 @@ fn step_durability_ack(
     let before = identity_of(&live.authority);
     let old: AckEvidence = ack_for(&live.authority, &[("s:0:0:0", latest - 1)]);
     let old_receipt = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .apply_durability_ack(old)
             .map_err(|err| format!("old ack: {}", err.error_id()))?
     };
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::apply_durability_ack old".into());
+        .push("VoxelWorldPortAdapter::apply_durability_ack old".into());
     if old_receipt.coverage_len() != 0
         || old_receipt.old_root() != before
         || old_receipt.new_root() != before
@@ -593,14 +563,14 @@ fn step_durability_ack(
 
     let covering: AckEvidence = ack_for(&live.authority, &[("s:0:0:0", latest)]);
     let receipt = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .apply_durability_ack(covering)
             .map_err(|err| format!("covering ack: {}", err.error_id()))?
     };
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::apply_durability_ack covering".into());
+        .push("VoxelWorldPortAdapter::apply_durability_ack covering".into());
     if receipt.coverage_len() != 1 || receipt.old_root() != before || receipt.new_root() == before {
         return Err("covering ack did not publish a new identity".into());
     }
@@ -618,7 +588,7 @@ fn step_close(live: &mut LiveSlice, report: &mut MvpIntegrationReport) -> Result
     let before_gen = live.authority.generation_guard().generation();
     let before_id = identity_of(&live.authority);
     {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         let mut sink = WorldEventSink::bounded(8);
         adapter
             .shutdown(&mut sink)
@@ -626,7 +596,7 @@ fn step_close(live: &mut LiveSlice, report: &mut MvpIntegrationReport) -> Result
     }
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::shutdown".into());
+        .push("VoxelWorldPortAdapter::shutdown".into());
     if live.authority.state_view().lifecycle() != "Disposed" {
         return Err(format!(
             "shutdown lifecycle {}",
@@ -640,7 +610,7 @@ fn step_close(live: &mut LiveSlice, report: &mut MvpIntegrationReport) -> Result
         return Err("shutdown mutated capture identity".into());
     }
     let err = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut live.authority);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .query(stale_query)
             .err()
@@ -648,8 +618,7 @@ fn step_close(live: &mut LiveSlice, report: &mut MvpIntegrationReport) -> Result
     };
     report
         .commands
-        .push("GeneratedVoxelWorldPortAdapter::query stale after shutdown".into());
-    require_stable(err.error_id())?;
+        .push("VoxelWorldPortAdapter::query stale after shutdown".into());
     if err.error_id() != "StaleEpoch" {
         return Err(format!("stale origin {}", err.error_id()));
     }
@@ -747,7 +716,7 @@ fn pad_remaining(steps: &mut Vec<MvpStepResult>, err: &str) {
     }
 }
 
-fn push_receipt(report: &mut MvpIntegrationReport, receipt: &GeneratedMutationReceipt) {
+fn push_receipt(report: &mut MvpIntegrationReport, receipt: &MutationReceipt) {
     report.receipts.push(MvpReceipt {
         txn_id: receipt.txn_id.clone(),
         old_root: receipt.evidence.old_root,
@@ -782,7 +751,7 @@ fn reference_trace() -> Result<[u8; 32], String> {
     Ok(hashes[0])
 }
 
-fn mvp_corpus() -> Result<Vec<GeneratedVoxelOperation>, String> {
+fn mvp_corpus() -> Result<Vec<VoxelOperation>, String> {
     let ids = [
         ("voxel-query", 0u64, b"query-four-state".as_slice()),
         ("voxel-mutation-receipt", 1, b"prepare-commit"),
@@ -793,8 +762,8 @@ fn mvp_corpus() -> Result<Vec<GeneratedVoxelOperation>, String> {
     ];
     let mut ops = Vec::with_capacity(ids.len());
     for (schema, seq, payload) in ids {
-        ops.push(GeneratedVoxelOperation {
-            schema_id: intern_schema(schema)?,
+        ops.push(VoxelOperation {
+            schema_id: schema,
             seq,
             payload: payload.to_vec(),
         });
@@ -803,45 +772,15 @@ fn mvp_corpus() -> Result<Vec<GeneratedVoxelOperation>, String> {
 }
 
 fn approved_snapshot(label: &str) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|gate| {
-            (
-                (*gate).to_string(),
-                hex32(&sha256(format!("approved-{gate}").as_bytes())),
-            )
-        })
-        .collect();
-    let evidence: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|gate| DecisionEvidence {
-            gate_id: (*gate).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*gate].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &evidence).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn create_world(
@@ -907,12 +846,12 @@ fn drive_to_running(
         ("Start", "Running"),
     ] {
         let cmd = lifecycle_cmd(world, event, to)?;
-        GeneratedVoxelWorldPortAdapter::new(world)
+        VoxelWorldPortAdapter::new(world)
             .admit(cmd)
             .map_err(|err| format!("{event}->{to}: {}", err.error_id()))?;
-        report.commands.push(format!(
-            "GeneratedVoxelWorldPortAdapter::admit {event}->{to}"
-        ));
+        report
+            .commands
+            .push(format!("VoxelWorldPortAdapter::admit {event}->{to}"));
         if world.state_view().lifecycle() != to {
             return Err(format!(
                 "{event} left lifecycle {}",
@@ -927,12 +866,12 @@ fn query_envelope(
     world: &VoxelWorld,
     query_id: &str,
     sections: &[&str],
-) -> Result<OriginEnvelope<GeneratedVoxelQueryRequest>, String> {
+) -> Result<OriginEnvelope<VoxelQueryRequest>, String> {
     let view = world.state_view();
     Ok(OriginEnvelope {
         origin: origin_of(world, query_id)?,
         config_hash: world.config_hash().to_string(),
-        payload: GeneratedVoxelQueryRequest {
+        payload: VoxelQueryRequest {
             query_id: query_id.to_string(),
             world_id: view.world_id().to_string(),
             context: view.world_context_id().to_string(),
@@ -1038,7 +977,7 @@ fn seed_four_state(world: &VoxelWorld) -> Result<(), String> {
     for id in ["s:0:0:0", "s:1:0:0", "s:2:0:0", "s:3:0:0"] {
         section_revision_set.insert(id.to_string(), next);
     }
-    let stamp = GeneratedRevisionStamp {
+    let stamp = RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: view.world_id().to_string(),
         context_id: view.world_context_id().to_string(),
@@ -1080,7 +1019,7 @@ fn seed_ready(world: &VoxelWorld, sections: &[&str]) -> Result<(), String> {
             .map_err(|err| format!("seed {id}: {}", err.error_id()))?;
         section_revision_set.insert((*id).to_string(), next);
     }
-    let stamp = GeneratedRevisionStamp {
+    let stamp = RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: view.world_id().to_string(),
         context_id: view.world_context_id().to_string(),
@@ -1147,34 +1086,12 @@ fn identity_of(world: &VoxelWorld) -> [u8; 32] {
     world.publication_authority().capture().root().identity()
 }
 
-fn intern_schema(id: &str) -> Result<&'static str, String> {
-    SCHEMA_IDS
-        .iter()
-        .copied()
-        .find(|item| *item == id)
-        .ok_or_else(|| format!("{id} missing from SCHEMA_IDS"))
-}
-
 fn intern_presence(name: &str) -> Result<&'static str, String> {
     SECTION_PRESENCE
         .iter()
         .copied()
         .find(|item| *item == name)
         .ok_or_else(|| format!("{name} missing from SECTION_PRESENCE"))
-}
-
-fn require_schema(id: &str) -> Result<(), String> {
-    intern_schema(id).map(|_| ())
-}
-
-fn require_stable(id: &str) -> Result<(), String> {
-    if is_stable_error_id(id) {
-        Ok(())
-    } else {
-        Err(format!(
-            "{id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-        ))
-    }
 }
 
 fn hex32(bytes: &[u8; 32]) -> String {

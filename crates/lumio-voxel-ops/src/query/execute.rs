@@ -7,7 +7,7 @@
 use super::QueryError;
 use super::budget;
 use super::plan::QueryPlan;
-use super::result_assembly::{GeneratedVoxelQueryOutcome, assemble};
+use super::result_assembly::{VoxelQueryOutcome, assemble};
 use super::section_access;
 use lumio_voxel_domain::publication::PublishedReadView;
 use lumio_voxel_domain::section::SectionPresenceGuard;
@@ -18,7 +18,7 @@ impl QueryExecutor {
     pub fn execute(
         plan: &QueryPlan,
         view: &PublishedReadView,
-    ) -> Result<GeneratedVoxelQueryOutcome, QueryError> {
+    ) -> Result<VoxelQueryOutcome, QueryError> {
         Self::walk(plan, view, 0)
     }
 
@@ -30,7 +30,7 @@ impl QueryExecutor {
         plan: &QueryPlan,
         view: &PublishedReadView,
         guard: &G,
-    ) -> Result<GeneratedVoxelQueryOutcome, QueryError> {
+    ) -> Result<VoxelQueryOutcome, QueryError> {
         Self::walk_with_presence_guard(plan, view, 0, guard)
     }
 
@@ -39,7 +39,7 @@ impl QueryExecutor {
         plan: &QueryPlan,
         view: &PublishedReadView,
         already_used: usize,
-    ) -> Result<GeneratedVoxelQueryOutcome, QueryError> {
+    ) -> Result<VoxelQueryOutcome, QueryError> {
         bind_cut(plan, view)?;
         walk_bound(plan, view, already_used, None)
     }
@@ -49,7 +49,7 @@ impl QueryExecutor {
         view: &PublishedReadView,
         already_used: usize,
         guard: &G,
-    ) -> Result<GeneratedVoxelQueryOutcome, QueryError> {
+    ) -> Result<VoxelQueryOutcome, QueryError> {
         bind_cut(plan, view)?;
         walk_bound(plan, view, already_used, Some(guard))
     }
@@ -58,7 +58,7 @@ impl QueryExecutor {
     pub fn execute_cancelled(
         plan: &QueryPlan,
         view: &PublishedReadView,
-    ) -> Result<GeneratedVoxelQueryOutcome, QueryError> {
+    ) -> Result<VoxelQueryOutcome, QueryError> {
         bind_cut(plan, view)?;
         Err(QueryError::loader_cancelled())
     }
@@ -86,7 +86,7 @@ fn walk_bound(
     view: &PublishedReadView,
     already_used: usize,
     guard: Option<&dyn SectionPresenceGuard>,
-) -> Result<GeneratedVoxelQueryOutcome, QueryError> {
+) -> Result<VoxelQueryOutcome, QueryError> {
     if budget::exceeds(already_used, plan.budget()) {
         return Err(QueryError::budget_exceeded());
     }

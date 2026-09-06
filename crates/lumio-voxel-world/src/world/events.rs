@@ -2,7 +2,6 @@
 
 #![forbid(unsafe_code)]
 
-use lumio_voxel_contracts::SCHEMA_IDS;
 use std::collections::VecDeque;
 
 pub(crate) const FAILURE_BUNDLE_SCHEMA: &str = "failure-bundle";
@@ -70,7 +69,7 @@ impl FailureBundleFragment {
         diagnostic_name: &'static str,
     ) -> Self {
         Self {
-            schema_id: intern_schema(FAILURE_BUNDLE_SCHEMA),
+            schema_id: FAILURE_BUNDLE_SCHEMA,
             incident_kind: INCIDENT_SIMULATION,
             error_id,
             world_id,
@@ -137,21 +136,13 @@ impl WorldEventSink {
     }
 }
 
-pub(crate) fn intern_schema(id: &'static str) -> &'static str {
-    SCHEMA_IDS
-        .iter()
-        .copied()
-        .find(|candidate| *candidate == id)
-        .expect("mapped schema id must exist in generated SCHEMA_IDS")
-}
-
 pub(crate) fn logging_event(
     event: &'static str,
     lifecycle: &'static str,
     generation: u64,
 ) -> WorldEvent {
     WorldEvent::Logging {
-        schema_id: intern_schema(LOGGING_EVENT_SCHEMA),
+        schema_id: LOGGING_EVENT_SCHEMA,
         event,
         lifecycle,
         generation,

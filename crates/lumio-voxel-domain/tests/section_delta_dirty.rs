@@ -1,7 +1,7 @@
 //! R-00076: staged delta, dirty frontier coverage, replacement freeze.
 
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_contracts::voxel_world as vw;
-use lumio_voxel_contracts::{SCHEMA_IDS, is_stable_error_id, sha256};
 use lumio_voxel_domain::section::{
     CoveredSectionAck, DirtyFrontier, DurabilityAckContext, DurabilityAckEvidence,
     SectionDeltaBuilder, SectionDirectoryBuilder, SectionDirectoryRoot, SectionPage,
@@ -15,13 +15,6 @@ fn dense_page(bytes: &[u8]) -> SectionPage {
 
 fn payload(bytes: &[u8]) -> SectionPayload {
     SectionPayload::from_pages([dense_page(bytes)]).expect("valid dense uncompressed page")
-}
-
-fn assert_stable_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
 }
 
 /// Canonical input-root fingerprint: sorted section ids + presence + payload digest.
@@ -116,7 +109,6 @@ fn failed_stage_or_freeze_leaves_input_root_hash_unchanged() {
         .stage(("s:01:0:0", SectionSlot::unchanged()))
         .unwrap_err();
     assert_eq!(err.error_id(), vw::UNKNOWN_SECTION_KEY);
-    assert_stable_error(err.error_id());
     assert_eq!(root, before);
     assert_eq!(hash_root(&root, &known), before_hash);
 
@@ -127,7 +119,6 @@ fn failed_stage_or_freeze_leaves_input_root_hash_unchanged() {
         .stage(("s:0:0:0", SectionSlot::ready(payload(b"conflict"))))
         .unwrap_err();
     assert_eq!(err.error_id(), "InvalidHandle");
-    assert_stable_error(err.error_id());
 
     let err = builder
         .stage(
@@ -135,7 +126,6 @@ fn failed_stage_or_freeze_leaves_input_root_hash_unchanged() {
         )
         .unwrap_err();
     assert_eq!(err.error_id(), "InvalidHandle");
-    assert_stable_error(err.error_id());
     drop(builder);
 
     let mut illegal = SectionDeltaBuilder::new(&root);
@@ -144,7 +134,6 @@ fn failed_stage_or_freeze_leaves_input_root_hash_unchanged() {
         .expect("stage does not publish");
     let err = illegal.freeze().unwrap_err();
     assert_eq!(err.error_id(), vw::SECTION_UNAVAILABLE);
-    assert_stable_error(err.error_id());
 
     assert_eq!(root, before);
     assert_eq!(hash_root(&root, &known), before_hash);
@@ -251,8 +240,6 @@ fn opaque_replacement_keeps_the_legacy_payload_digest() {
 
 #[test]
 fn dirty_frontier_newer_dirty_not_covered_by_older_ack() {
-    assert!(SCHEMA_IDS.contains(&"voxel-durability-ack"));
-
     let frontier = DirtyFrontier::new("world-a", 7).expect("bound frontier");
     let first = frontier
         .record("s:0:0:0", 5, "AuthoritativeWrite")
@@ -312,18 +299,15 @@ fn dirty_frontier_newer_dirty_not_covered_by_older_ack() {
     let wrong_world = ack("world-b", 7, 8, &[("s:0:0:0", 9)]);
     let err = newer.covered_by(&wrong_world).unwrap_err();
     assert_eq!(err.error_id(), "SessionMismatch");
-    assert_stable_error(err.error_id());
 
     let wrong_generation = ack("world-a", 8, 8, &[("s:0:0:0", 9)]);
     let err = newer.covered_by(&wrong_generation).unwrap_err();
     assert_eq!(err.error_id(), "StaleEpoch");
-    assert_stable_error(err.error_id());
 
     let mut bad_kind = matching.clone();
     bad_kind.kind = "NotAnAck".to_string();
     let err = newer.covered_by(&bad_kind).unwrap_err();
     assert_eq!(err.error_id(), "InvalidHandle");
-    assert_stable_error(err.error_id());
 }
 
 /// Strips Rust comments so the guard scans executable source, not prose.

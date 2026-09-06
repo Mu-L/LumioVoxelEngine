@@ -17,4 +17,4 @@ pub use allocator::{
 pub use pin::{PinError, PinRegistry, RevisionPin};
 pub use read_view::ReadViewLease;
 pub use retention::RetentionFrontier;
-pub use stamp::{GeneratedRevisionStamp, REVISION_STAMP_SCHEMA, to_generated_stamp};
+pub use stamp::{REVISION_STAMP_SCHEMA, RevisionStamp, to_revision_stamp};

@@ -1,15 +1,13 @@
 //! R-00071: immutable ReadView pin, live-pin retention, dual-world isolation.
 
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, SCHEMA_IDS, is_stable_error_id, sha256};
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, PinRegistry, ReadViewLease, RetentionFrontier, RevisionAllocator,
-    to_generated_stamp,
+    PinRegistry, ReadViewLease, RetentionFrontier, RevisionAllocator, RevisionStamp,
+    to_revision_stamp,
 };
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 fn hex32(bytes: &[u8; 32]) -> String {
@@ -23,45 +21,15 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 fn approved_snapshot(label: &str) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|g| {
-            (
-                (*g).to_string(),
-                hex32(&sha256(format!("approved-{g}").as_bytes())),
-            )
-        })
-        .collect();
-    let ev: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|g| DecisionEvidence {
-            gate_id: (*g).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*g].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &ev).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn stamp_at(
@@ -70,7 +38,7 @@ fn stamp_at(
     generation: u64,
     world_rev: u64,
     sections: &[(&str, u64)],
-) -> GeneratedRevisionStamp {
+) -> RevisionStamp {
     let mut alloc = RevisionAllocator::new();
     for _ in 0..world_rev {
         alloc.reserve_world().unwrap().abandon();
@@ -86,14 +54,11 @@ fn stamp_at(
         let mut c = section_alloc.reserve_section().unwrap();
         pairs.push((id.to_string(), c.finalize().unwrap()));
     }
-    to_generated_stamp(world_id, context_id, generation, world, &pairs)
+    to_revision_stamp(world_id, context_id, generation, world, &pairs)
 }
 
-fn assert_generated_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
+/// 引脚拒绝的错误 id。活契约不定义引擎通用的句柄 / 预算失败,本仓自持这两个名字。
+fn assert_pin_refusal_error(id: &str) {
     assert!(
         id == "InvalidHandle" || id == "BudgetExceeded",
         "pin refusal must map to InvalidHandle or BudgetExceeded, got {id}"
@@ -104,7 +69,6 @@ fn assert_send_sync<T: Send + Sync>() {}
 
 #[test]
 fn read_view_stamp_is_frozen_across_later_stamp_and_config_reload() {
-    assert!(SCHEMA_IDS.contains(&"voxel-revision-stamp"));
     assert_send_sync::<lumio_voxel_domain::revision::RevisionPin>();
     assert_send_sync::<ReadViewLease>();
 
@@ -172,7 +136,7 @@ fn two_registries_do_not_share_pins_or_retention() {
     assert_eq!(pin_b.stamp(), &stamp);
 
     let over_a = a.try_pin(stamp.clone()).unwrap_err();
-    assert_generated_error(over_a.error_id());
+    assert_pin_refusal_error(over_a.error_id());
     assert!(
         b.try_pin(stamp.clone()).is_err(),
         "b is independently at capacity"
@@ -189,7 +153,7 @@ fn two_registries_do_not_share_pins_or_retention() {
     let foreign = stamp_at("world-b", "ctx-b", 9, 0, &[]);
     let mismatch = b.try_pin(foreign).unwrap_err();
     assert_eq!(mismatch.error_id(), "InvalidHandle");
-    assert_generated_error(mismatch.error_id());
+    assert_pin_refusal_error(mismatch.error_id());
 }
 
 #[test]
@@ -198,13 +162,13 @@ fn try_pin_over_max_pins_fails_with_generated_error_id() {
     let zero = PinRegistry::from_approved_snapshot(snap.clone(), 0, "ctx-1", 1);
     let stamp = stamp_at("world-a", "ctx-1", 1, 0, &[]);
     let zero_err = zero.try_pin(stamp.clone()).unwrap_err();
-    assert_generated_error(zero_err.error_id());
+    assert_pin_refusal_error(zero_err.error_id());
 
     let registry = PinRegistry::from_approved_snapshot(snap, 1, "ctx-1", 1);
     let held = registry.try_pin(stamp.clone()).unwrap();
     let clone = held.clone();
     let over = registry.try_pin(stamp.clone()).unwrap_err();
-    assert_generated_error(over.error_id());
+    assert_pin_refusal_error(over.error_id());
     assert_eq!(over.error_id(), "BudgetExceeded");
 
     drop(clone);
@@ -227,7 +191,7 @@ fn destroyed_world_refuses_new_pins_old_pin_keeps_immutable_stamp() {
     registry.destroy();
     let refused = registry.try_pin(stamp.clone()).unwrap_err();
     assert_eq!(refused.error_id(), "InvalidHandle");
-    assert_generated_error(refused.error_id());
+    assert_pin_refusal_error(refused.error_id());
     assert_eq!(held.stamp(), &stamp);
     assert_eq!(view.stamp(), &stamp);
 

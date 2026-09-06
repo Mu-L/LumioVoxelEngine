@@ -1,17 +1,12 @@
 //! R-00116: SimulationSession lifecycle, generation fencing, and command admission.
 
-use lumio_voxel_contracts::legacy_baseline;
-use lumio_voxel_contracts::{
-    BASELINE_ID, MACHINE_IDS, SCHEMA_EPOCH, SCHEMA_IDS, Transition, VOXEL_WORLD_ROLES,
-    is_stable_error_id, sha256, state_transition_table,
-};
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::PublishedStateRoot;
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, REVISION_STAMP_SCHEMA, RevisionAllocator, WorldRevision,
+    REVISION_STAMP_SCHEMA, RevisionAllocator, RevisionStamp, WorldRevision,
 };
 use lumio_voxel_domain::section::{
     DirtyFrontier, SectionDeltaBuilder, SectionDirectoryBuilder, SectionPage, SectionPayload,
@@ -19,9 +14,10 @@ use lumio_voxel_domain::section::{
 };
 use lumio_voxel_ops::async_support::OriginToken;
 use lumio_voxel_ops::mutation::MutationRequest;
-use lumio_voxel_ops::query::GeneratedVoxelQueryRequest;
+use lumio_voxel_ops::query::VoxelQueryRequest;
 use lumio_voxel_world::world::{
-    AdmittedCommand, VoxelWorld, WorldCommand, WorldConfigAdapter, WorldDescriptor, WorldError,
+    AdmittedCommand, SESSION_TRANSITIONS, SIMULATION_SESSION_MACHINE, VOXEL_WORLD_ROLES,
+    VoxelWorld, WorldCommand, WorldConfigAdapter, WorldDescriptor, WorldError,
     intern_local_embedded_pair, intern_role,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -38,61 +34,23 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 fn approved_snapshot(label: &str) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|g| {
-            (
-                (*g).to_string(),
-                hex32(&sha256(format!("approved-{g}").as_bytes())),
-            )
-        })
-        .collect();
-    let ev: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|g| DecisionEvidence {
-            gate_id: (*g).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*g].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &ev).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn session_machine() -> &'static str {
-    MACHINE_IDS
-        .iter()
-        .copied()
-        .find(|id| *id == "SimulationSession")
-        .expect("SimulationSession is generated")
+    SIMULATION_SESSION_MACHINE
 }
 
-fn session_edges() -> Vec<&'static Transition> {
-    let machine = session_machine();
-    state_transition_table()
-        .iter()
-        .filter(|t| t.machine == machine)
-        .collect()
+fn session_edges() -> Vec<&'static (&'static str, &'static str, &'static str)> {
+    SESSION_TRANSITIONS.iter().collect()
 }
 
 fn path_from_created(target: &str) -> Vec<(&'static str, &'static str)> {
@@ -105,15 +63,15 @@ fn path_from_created(target: &str) -> Vec<(&'static str, &'static str)> {
     seen.insert("Created");
     while let Some((node, path)) = q.pop_front() {
         for edge in session_edges() {
-            if edge.from != node || !seen.insert(edge.to) {
+            if edge.0 != node || !seen.insert(edge.2) {
                 continue;
             }
             let mut next = path.clone();
-            next.push((edge.event, edge.to));
-            if edge.to == target {
+            next.push((edge.1, edge.2));
+            if edge.2 == target {
                 return next;
             }
-            q.push_back((edge.to, next));
+            q.push_back((edge.2, next));
         }
     }
     panic!("no SimulationSession path from Created to {target}");
@@ -188,7 +146,7 @@ fn query_cmd(world: &VoxelWorld, query_id: &str) -> WorldCommand {
     let view = world.state_view();
     WorldCommand::Query {
         origin: origin_of(world, query_id),
-        request: GeneratedVoxelQueryRequest {
+        request: VoxelQueryRequest {
             query_id: query_id.to_string(),
             world_id: view.world_id().to_string(),
             context: view.world_context_id().to_string(),
@@ -238,7 +196,7 @@ fn root_at(
         .insert("s:0:0:0", slot)
         .expect("canonical section id");
     let directory = builder.freeze();
-    let stamp = GeneratedRevisionStamp {
+    let stamp = RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: world_id.to_string(),
         context_id: context_id.to_string(),
@@ -256,16 +214,10 @@ fn root_at(
     PublishedStateRoot::new(stamp, directory, dirty)
 }
 
-fn assert_stable_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
-}
-
 fn assert_not_host_lifecycle(name: &str) {
     assert_ne!(name, "WorldSlotHost");
-    assert_ne!(name, legacy_baseline::SECTION_RESIDENCY_MACHINE_ID);
+    // 16³ 数据单元的驻留状态机在死基线里叫 VoxelChunkResidency;会话生命周期名不得与它混。
+    assert_ne!(name, "VoxelChunkResidency");
     assert!(!matches!(
         name,
         "Allocated"
@@ -286,7 +238,6 @@ fn assert_not_host_lifecycle(name: &str) {
 
 #[test]
 fn legal_simulation_session_edges_succeed() {
-    assert!(SCHEMA_IDS.contains(&"voxel-world-port"));
     assert_eq!(VOXEL_WORLD_ROLES, &["Authority", "Replica"]);
     assert_eq!(
         intern_role("Authority").expect("intern Authority"),
@@ -302,22 +253,22 @@ fn legal_simulation_session_edges_succeed() {
             "Authority",
             "ctx-legal",
             "world-legal",
-            &format!("r00116-legal-{}-{}", edge.from, edge.to),
+            &format!("r00116-legal-{}-{}", edge.0, edge.2),
         );
-        drive(&mut world, &path_from_created(edge.from));
-        assert_eq!(world.state_view().lifecycle(), edge.from);
+        drive(&mut world, &path_from_created(edge.0));
+        assert_eq!(world.state_view().lifecycle(), edge.0);
         assert_eq!(world.state_view().lifecycle_machine(), machine);
-        let cmd = lifecycle_cmd(&world, edge.event, edge.to);
+        let cmd = lifecycle_cmd(&world, edge.1, edge.2);
         let admitted = admit(&mut world, cmd).expect("legal SimulationSession edge");
         match admitted {
             AdmittedCommand::Lifecycle { from, event, to } => {
-                assert_eq!(from, edge.from);
-                assert_eq!(event, edge.event);
-                assert_eq!(to, edge.to);
+                assert_eq!(from, edge.0);
+                assert_eq!(event, edge.1);
+                assert_eq!(to, edge.2);
             }
             other => panic!("expected lifecycle admission, got {other:?}"),
         }
-        assert_eq!(world.state_view().lifecycle(), edge.to);
+        assert_eq!(world.state_view().lifecycle(), edge.2);
     }
 }
 
@@ -327,9 +278,8 @@ fn illegal_created_start_running_fails_and_state_unchanged() {
     let before = world.state_view().lifecycle();
     assert_eq!(before, "Created");
     let cmd = lifecycle_cmd(&world, "Start", "Running");
-    let err =
+    let _err =
         admit(&mut world, cmd).expect_err("Created --Start--> Running is not on SimulationSession");
-    assert_stable_error(err.error_id());
     assert_eq!(world.state_view().lifecycle(), before);
     assert_eq!(world.state_view().lifecycle_machine(), session_machine());
 }
@@ -357,7 +307,6 @@ fn stale_generation_command_does_not_change_lifecycle() {
         })
         .expect_err("stale generation must not apply");
     assert_eq!(err.error_id(), "StaleEpoch");
-    assert_stable_error(err.error_id());
     assert_eq!(world.state_view().lifecycle(), before);
 }
 
@@ -375,9 +324,8 @@ fn pause_rejects_mutation_admit_resume_allows_without_commit() {
     );
     let paused = world.state_view().lifecycle();
     let paused_cmd = mutation_cmd(&world, "txn-paused");
-    let err =
+    let _err =
         admit(&mut world, paused_cmd).expect_err("Paused must reject writes before any write path");
-    assert_stable_error(err.error_id());
     assert_eq!(world.state_view().lifecycle(), paused);
 
     let resume = lifecycle_cmd(&world, "Resume", "Running");
@@ -485,7 +433,7 @@ fn world_state_view_does_not_expose_host_slot_or_session_types() {
     assert_not_host_lifecycle(machine);
     assert_not_host_lifecycle(lifecycle);
     assert!(VOXEL_WORLD_ROLES.contains(&role));
-    assert!(!MACHINE_IDS.contains(&lifecycle));
+    assert_ne!(lifecycle, SIMULATION_SESSION_MACHINE);
 }
 
 #[test]
@@ -504,7 +452,6 @@ fn create_rejects_empty_ids_and_unknown_role() {
     )
     .unwrap_err();
     assert_eq!(empty_ctx.error_id(), "InvalidHandle");
-    assert_stable_error(empty_ctx.error_id());
 
     let unknown = VoxelWorld::create(
         WorldDescriptor {
@@ -519,5 +466,4 @@ fn create_rejects_empty_ids_and_unknown_role() {
     )
     .unwrap_err();
     assert!(unknown.error_id() == "RoleMismatch" || unknown.error_id() == "ClaimNotGranted");
-    assert_stable_error(unknown.error_id());
 }

@@ -7,7 +7,7 @@ use super::events::{FailureBundleFragment, WorldEvent, WorldEventSink};
 use super::instance::VoxelWorld;
 use super::shutdown::WorldShutdown;
 use super::state::{has_session_edge, intern_session_event, intern_session_state};
-use lumio_voxel_contracts::STABLE_ERROR_IDS;
+use lumio_voxel_contracts::voxel_world as vw;
 
 /// Short diagnostic label. Never a key or a raw payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,12 +52,13 @@ impl WorldFaultPort {
     }
 }
 
+/// 契约错误码收敛到契约表里的那一个 `'static` 实例;引擎通用的故障名本仓自持,原样透出。
+/// 空串仍然是非法入参。
 fn intern_cause(cause: &'static str) -> Result<&'static str, WorldError> {
-    STABLE_ERROR_IDS
-        .iter()
-        .copied()
-        .find(|candidate| *candidate == cause)
-        .ok_or_else(WorldError::invalid_handle)
+    if cause.is_empty() {
+        return Err(WorldError::invalid_handle());
+    }
+    Ok(vw::intern_error_code(cause).unwrap_or(cause))
 }
 
 fn shutdown_admissible(world: &VoxelWorld) -> bool {

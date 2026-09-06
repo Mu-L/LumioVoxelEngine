@@ -2,16 +2,15 @@
 //! generated schema/error ids (no second Schema).
 
 use crate::fault_injection::{FaultInjector, FaultPoint};
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_contracts::voxel_world as vw;
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, SCHEMA_IDS, sha256};
 use lumio_voxel_domain::block::{BlockId, CellOffset};
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::PublishedStateRoot;
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, REVISION_STAMP_SCHEMA, RevisionAllocator, WorldRevision,
+    REVISION_STAMP_SCHEMA, RevisionAllocator, RevisionStamp, WorldRevision,
 };
 use lumio_voxel_domain::section::{
     CoveredSectionAck, DirtyFrontier, DurabilityAckContext, SectionDeltaBuilder,
@@ -21,12 +20,12 @@ use lumio_voxel_ops::async_support::{OriginEnvelope, OriginToken};
 use lumio_voxel_ops::mutation::{
     MutationEntry, MutationRequest, PreparedMutation, canonical_fingerprint,
 };
-use lumio_voxel_ops::query::GeneratedVoxelQueryRequest;
+use lumio_voxel_ops::query::VoxelQueryRequest;
 use lumio_voxel_ops::snapshot::{
     MemoryCaptureWriter, RestorePreflight, RestoreShadowBuilder, VoxelCaptureRef,
     decode_canonical_object, encode_capture,
 };
-use lumio_voxel_world::port::GeneratedVoxelWorldPortAdapter;
+use lumio_voxel_world::port::VoxelWorldPortAdapter;
 use lumio_voxel_world::world::{
     AckEvidence, RuntimeSnapshotCut, VoxelWorld, WorldCommand, WorldConfigAdapter, WorldDescriptor,
     WorldEventSink,
@@ -35,14 +34,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GeneratedVoxelOperation {
+pub struct VoxelOperation {
     pub schema_id: &'static str,
     pub seq: u64,
     pub payload: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GeneratedVoxelOutcome {
+pub struct VoxelOutcome {
     pub schema_id: &'static str,
     pub seq: u64,
     pub payload: Vec<u8>,
@@ -52,7 +51,7 @@ pub struct GeneratedVoxelOutcome {
 
 pub struct VoxelPortHarness {
     injector: FaultInjector,
-    committed: Vec<GeneratedVoxelOperation>,
+    committed: Vec<VoxelOperation>,
 }
 
 impl Default for VoxelPortHarness {
@@ -73,11 +72,7 @@ impl VoxelPortHarness {
         self.injector.arm(point);
     }
 
-    pub fn execute(&mut self, op: &GeneratedVoxelOperation) -> GeneratedVoxelOutcome {
-        debug_assert!(
-            SCHEMA_IDS.contains(&op.schema_id),
-            "operation schema_id must be a generated schema id"
-        );
+    pub fn execute(&mut self, op: &VoxelOperation) -> VoxelOutcome {
         match self.injector.take() {
             Some(FaultPoint::PrePublication) => {
                 return fail(op, FaultPoint::PrePublication);
@@ -117,8 +112,8 @@ impl VoxelPortHarness {
     }
 }
 
-fn ok(op: &GeneratedVoxelOperation) -> GeneratedVoxelOutcome {
-    GeneratedVoxelOutcome {
+fn ok(op: &VoxelOperation) -> VoxelOutcome {
+    VoxelOutcome {
         schema_id: op.schema_id,
         seq: op.seq,
         payload: op.payload.clone(),
@@ -127,8 +122,8 @@ fn ok(op: &GeneratedVoxelOperation) -> GeneratedVoxelOutcome {
     }
 }
 
-fn fail(op: &GeneratedVoxelOperation, point: FaultPoint) -> GeneratedVoxelOutcome {
-    GeneratedVoxelOutcome {
+fn fail(op: &VoxelOperation, point: FaultPoint) -> VoxelOutcome {
+    VoxelOutcome {
         schema_id: op.schema_id,
         seq: op.seq,
         payload: Vec::new(),
@@ -236,9 +231,6 @@ pub struct StateEvidence {
     pub dirty_frontier: Vec<DirtyStateEvidence>,
     pub dirty_digest: [u8; 32],
     pub config_hash: String,
-    pub baseline_id: String,
-    pub schema_epoch: u64,
-    pub gate_source_hashes: Vec<(String, String)>,
     pub publication_epoch: u64,
     pub semantic_digest: [u8; 32],
 }
@@ -333,9 +325,6 @@ pub struct DifferentialObservation {
     pub dirty_frontier: Vec<DirtyStateEvidence>,
     pub dirty_digest: [u8; 32],
     pub config_hash: String,
-    pub baseline_id: String,
-    pub schema_epoch: u64,
-    pub gate_source_hashes: Vec<(String, String)>,
     pub publication_epoch: u64,
     pub state_semantic_digest: [u8; 32],
     pub capture: Option<CaptureObservation>,
@@ -360,22 +349,22 @@ const CALLABLE_COVERAGE: [CallableCoverage; 11] = [
     },
     CallableCoverage {
         method: "query",
-        local_route: Some("GeneratedVoxelWorldPortAdapter::query"),
+        local_route: Some("VoxelWorldPortAdapter::query"),
         status: "BLOCKED_UPSTREAM",
     },
     CallableCoverage {
         method: "prepareMutation",
-        local_route: Some("GeneratedVoxelWorldPortAdapter::prepare_mutation"),
+        local_route: Some("VoxelWorldPortAdapter::prepare_mutation"),
         status: "BLOCKED_UPSTREAM",
     },
     CallableCoverage {
         method: "commit",
-        local_route: Some("GeneratedVoxelWorldPortAdapter::commit"),
+        local_route: Some("VoxelWorldPortAdapter::commit"),
         status: "BLOCKED_UPSTREAM",
     },
     CallableCoverage {
         method: "abort",
-        local_route: Some("GeneratedVoxelWorldPortAdapter::abort"),
+        local_route: Some("VoxelWorldPortAdapter::abort"),
         status: "BLOCKED_UPSTREAM",
     },
     CallableCoverage {
@@ -385,17 +374,17 @@ const CALLABLE_COVERAGE: [CallableCoverage; 11] = [
     },
     CallableCoverage {
         method: "capture",
-        local_route: Some("GeneratedVoxelWorldPortAdapter::capture"),
+        local_route: Some("VoxelWorldPortAdapter::capture"),
         status: "BLOCKED_UPSTREAM",
     },
     CallableCoverage {
         method: "applyDurabilityAck",
-        local_route: Some("GeneratedVoxelWorldPortAdapter::apply_durability_ack"),
+        local_route: Some("VoxelWorldPortAdapter::apply_durability_ack"),
         status: "BLOCKED_UPSTREAM",
     },
     CallableCoverage {
         method: "restore",
-        local_route: Some("GeneratedVoxelWorldPortAdapter::restore"),
+        local_route: Some("VoxelWorldPortAdapter::restore"),
         status: "BLOCKED_UPSTREAM",
     },
     CallableCoverage {
@@ -633,7 +622,6 @@ struct OracleState {
     capture: Option<CaptureObservation>,
     publication_epoch: u64,
     config_hash: String,
-    gate_source_hashes: Vec<(String, String)>,
 }
 
 impl OracleState {
@@ -661,7 +649,6 @@ impl OracleState {
             capture: None,
             publication_epoch: 0,
             config_hash: config_hash_for(CONFIG_LABEL),
-            gate_source_hashes: provenance_pairs(),
         }
     }
 
@@ -731,9 +718,6 @@ impl OracleState {
             dirty_frontier: dirty,
             dirty_digest,
             config_hash: self.config_hash.clone(),
-            baseline_id: BASELINE_ID.into(),
-            schema_epoch: SCHEMA_EPOCH,
-            gate_source_hashes: self.gate_source_hashes.clone(),
             publication_epoch: self.publication_epoch,
             semantic_digest: semantic,
         }
@@ -1916,7 +1900,7 @@ fn execute_rust_vector(
                 &config_hash,
             )?;
             run.last_request = Some(env.clone());
-            match GeneratedVoxelWorldPortAdapter::new(&mut run.world).prepare_mutation(env) {
+            match VoxelWorldPortAdapter::new(&mut run.world).prepare_mutation(env) {
                 Ok(p) => run.prepared = Some(p),
                 Err(e) => {
                     ok = false;
@@ -2009,7 +1993,7 @@ fn execute_rust_vector(
                 .last_request
                 .clone()
                 .ok_or_else(|| "missing replay request".to_string())?;
-            let p = GeneratedVoxelWorldPortAdapter::new(&mut run.world)
+            let p = VoxelWorldPortAdapter::new(&mut run.world)
                 .prepare_mutation(request.clone())
                 .map_err(|e| e.error_id().to_string())?;
             match rust_commit(run, p, "Duplicate")? {
@@ -2152,7 +2136,7 @@ fn execute_rust_vector(
             restore = Some(rust_valid_restore(run)?);
         }
         (DifferentialOperation::Shutdown, 10) => {
-            GeneratedVoxelWorldPortAdapter::new(&mut run.world)
+            VoxelWorldPortAdapter::new(&mut run.world)
                 .shutdown(&mut run.sink)
                 .map_err(|e| e.error_id().to_string())?;
         }
@@ -2234,9 +2218,6 @@ fn make_observation(
         dirty_frontier: state.dirty_frontier.clone(),
         dirty_digest: state.dirty_digest,
         config_hash: state.config_hash.clone(),
-        baseline_id: state.baseline_id.clone(),
-        schema_epoch: state.schema_epoch,
-        gate_source_hashes: state.gate_source_hashes.clone(),
         publication_epoch: state.publication_epoch,
         state_semantic_digest: state.semantic_digest,
         capture,
@@ -2332,9 +2313,6 @@ fn rust_state(run: &mut RustRun) -> StateEvidence {
         dirty_frontier: dirty,
         dirty_digest,
         config_hash: run.config_hash.clone(),
-        baseline_id: BASELINE_ID.into(),
-        schema_epoch: SCHEMA_EPOCH,
-        gate_source_hashes: provenance_pairs(),
         publication_epoch: run.publication_epoch,
         semantic_digest: semantic,
     }
@@ -2352,7 +2330,7 @@ fn rust_lifecycle(
         to,
         origin: rust_origin(&run.world, event, None, None)?,
     };
-    if let Err(e) = GeneratedVoxelWorldPortAdapter::new(&mut run.world).admit(command) {
+    if let Err(e) = VoxelWorldPortAdapter::new(&mut run.world).admit(command) {
         *ok = false;
         *error = Some(e.error_id().into());
     }
@@ -2365,7 +2343,7 @@ fn rust_lifecycle_probe(run: &mut RustRun) -> Result<ProbeObservation, String> {
         to: "Ready",
         origin: rust_origin(&run.world, "illegal-transition", None, None)?,
     };
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).admit(command);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).admit(command);
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(error) => (false, Some(error.error_id().into())),
@@ -2394,7 +2372,7 @@ fn rust_query(
     generation: u64,
     config: &str,
 ) -> Result<Result<Vec<(String, String)>, String>, String> {
-    let request = GeneratedVoxelQueryRequest {
+    let request = VoxelQueryRequest {
         query_id: query_id.into(),
         world_id: world.into(),
         context: context.into(),
@@ -2406,7 +2384,7 @@ fn rust_query(
         config_hash: config.into(),
         payload: request,
     };
-    match GeneratedVoxelWorldPortAdapter::new(&mut run.world).query(env) {
+    match VoxelWorldPortAdapter::new(&mut run.world).query(env) {
         Ok(out) => Ok(Ok(out
             .payload
             .items()
@@ -2497,7 +2475,7 @@ fn rust_prepare_probe(
     let env = rust_mutation_request(
         run, txn, expected, section, cell, value, world, generation, config,
     )?;
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).prepare_mutation(env);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).prepare_mutation(env);
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(e) => (false, Some(e.error_id().into())),
@@ -2540,11 +2518,10 @@ fn rust_abort_probe(
         generation,
         config,
     )?;
-    let result =
-        match GeneratedVoxelWorldPortAdapter::new(&mut run.world).prepare_mutation(env.clone()) {
-            Ok(_) => GeneratedVoxelWorldPortAdapter::new(&mut run.world).abort(env),
-            Err(e) => Err(e),
-        };
+    let result = match VoxelWorldPortAdapter::new(&mut run.world).prepare_mutation(env.clone()) {
+        Ok(_) => VoxelWorldPortAdapter::new(&mut run.world).abort(env),
+        Err(e) => Err(e),
+    };
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(e) => (false, Some(e.error_id().into())),
@@ -2573,7 +2550,7 @@ fn rust_commit(
         .as_ref()
         .map(|e| e.payload.clone())
         .ok_or_else(|| "request missing".to_string())?;
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).commit(prepared);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).commit(prepared);
     match result {
         Ok(out) => {
             let fields = decode_canonical_object(&out.payload.receipt)
@@ -2697,7 +2674,7 @@ fn rust_commit_new(
         &run.config_hash,
     )?;
     run.last_request = Some(env.clone());
-    let prepared = GeneratedVoxelWorldPortAdapter::new(&mut run.world)
+    let prepared = VoxelWorldPortAdapter::new(&mut run.world)
         .prepare_mutation(env)
         .map_err(|e| e.error_id().to_string())?;
     rust_commit(run, prepared, "Original")?
@@ -2711,7 +2688,7 @@ fn rust_conflicting_replay_probe(
     if let Some(entry) = conflict.payload.entries.first_mut() {
         entry.block_id = BlockId::from_raw(hash_value("conflicting"));
     }
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).prepare_mutation(conflict);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).prepare_mutation(conflict);
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(e) => (false, Some(e.error_id().into())),
@@ -2731,7 +2708,7 @@ fn rust_conflicting_replay_probe(
 
 fn rust_capture(run: &mut RustRun, cut_id: &str) -> Result<CaptureObservation, String> {
     let cut = RuntimeSnapshotCut::from_live(&run.world, cut_id);
-    let (capture, evidence) = GeneratedVoxelWorldPortAdapter::new(&mut run.world)
+    let (capture, evidence) = VoxelWorldPortAdapter::new(&mut run.world)
         .capture(&cut)
         .map_err(|e| e.error_id().to_string())?;
     if evidence.root_hash != capture.root_identity()
@@ -2775,7 +2752,7 @@ fn rust_capture(run: &mut RustRun, cut_id: &str) -> Result<CaptureObservation, S
 fn rust_capture_mismatch_probe(run: &mut RustRun) -> Result<ProbeObservation, String> {
     let mut cut = RuntimeSnapshotCut::from_live(&run.world, "cut-root-mismatch");
     cut.artifact_hash[0] ^= 1;
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).capture(&cut);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).capture(&cut);
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(error) => (false, Some(error.error_id().into())),
@@ -2876,7 +2853,7 @@ fn rust_valid_restore(run: &mut RustRun) -> Result<RestoreObservation, String> {
         .capture()
         .root()
         .identity();
-    let receipt = GeneratedVoxelWorldPortAdapter::new(&mut run.world)
+    let receipt = VoxelWorldPortAdapter::new(&mut run.world)
         .restore(candidate)
         .map_err(|e| e.error_id().to_string())?;
     if receipt.old_root() != old_root || receipt.new_root() == old_root {
@@ -2909,7 +2886,7 @@ fn rust_valid_restore(run: &mut RustRun) -> Result<RestoreObservation, String> {
 
 fn rust_capture_ref(run: &mut RustRun, cut_id: &str) -> Result<VoxelCaptureRef, String> {
     let cut = RuntimeSnapshotCut::from_live(&run.world, cut_id);
-    let (capture, _) = GeneratedVoxelWorldPortAdapter::new(&mut run.world)
+    let (capture, _) = VoxelWorldPortAdapter::new(&mut run.world)
         .capture(&cut)
         .map_err(|e| e.error_id().to_string())?;
     run.last_capture = Some(capture.clone());
@@ -2968,7 +2945,7 @@ fn rust_ack_probe(
         .capture()
         .root()
         .identity();
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
     match result {
         Ok(receipt) => {
             let out = AckObservation {
@@ -3035,7 +3012,7 @@ fn rust_ack_error_probe(
         covered_world_revision: 0,
         covered_sections: Vec::new(),
     };
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(e) => (false, Some(e.error_id().into())),
@@ -3075,7 +3052,7 @@ fn rust_ack_future_probe(run: &mut RustRun) -> Result<ProbeObservation, String> 
         covered_world_revision: covered,
         covered_sections: Vec::new(),
     };
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(e) => (false, Some(e.error_id().into())),
@@ -3124,7 +3101,7 @@ fn rust_ack_duplicate_probe(run: &mut RustRun) -> Result<ProbeObservation, Strin
             },
         ],
     };
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(e) => (false, Some(e.error_id().into())),
@@ -3167,7 +3144,7 @@ fn rust_ack_malformed_probe(run: &mut RustRun) -> Result<ProbeObservation, Strin
             up_to_section_revision: 0,
         }],
     };
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(error) => (false, Some(error.error_id().into())),
@@ -3208,7 +3185,7 @@ fn rust_ack_wrong_kind_probe(run: &mut RustRun) -> Result<ProbeObservation, Stri
             .world_revision,
         covered_sections: Vec::new(),
     };
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).apply_durability_ack(evidence);
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(error) => (false, Some(error.error_id().into())),
@@ -3654,7 +3631,7 @@ fn rust_dirty_digest(dirty: &[DirtyStateEvidence]) -> [u8; 32] {
 
 #[allow(clippy::too_many_arguments)]
 fn rust_state_digest(
-    stamp: &GeneratedRevisionStamp,
+    stamp: &RevisionStamp,
     lifecycle: &str,
     lifecycle_machine: &str,
     generation: u64,
@@ -4751,9 +4728,6 @@ fn observation_matches(a: &DifferentialObservation, b: &DifferentialObservation)
         && a.dirty_frontier == b.dirty_frontier
         && a.dirty_digest == b.dirty_digest
         && a.config_hash == b.config_hash
-        && a.baseline_id == b.baseline_id
-        && a.schema_epoch == b.schema_epoch
-        && a.gate_source_hashes == b.gate_source_hashes
         && a.publication_epoch == b.publication_epoch
         && a.state_semantic_digest == b.state_semantic_digest
         && optional_capture_match(a.capture.as_ref(), b.capture.as_ref())
@@ -4891,9 +4865,6 @@ fn state_matches_for_contract(a: &StateEvidence, b: &StateEvidence) -> bool {
         && a.dirty_frontier == b.dirty_frontier
         && a.dirty_digest == b.dirty_digest
         && a.config_hash == b.config_hash
-        && a.baseline_id == b.baseline_id
-        && a.schema_epoch == b.schema_epoch
-        && a.gate_source_hashes == b.gate_source_hashes
         && a.publication_epoch == b.publication_epoch
         && a.semantic_digest == b.semantic_digest
 }
@@ -5060,13 +5031,6 @@ fn observation_complete(observation: &DifferentialObservation) -> bool {
         && observation.stamp_generation > 0
         && !observation.lifecycle_machine.is_empty()
         && !observation.config_hash.is_empty()
-        && observation.baseline_id == BASELINE_ID
-        && observation.schema_epoch == SCHEMA_EPOCH
-        && observation.gate_source_hashes.len() == 5
-        && observation
-            .gate_source_hashes
-            .iter()
-            .all(|(_, value)| value != "differential" && !value.is_empty())
         && observation.section_revision_set.len() >= READY_SECTIONS.len()
         && observation.sections.len() == KNOWN_SECTIONS.len()
         && observation.dirty_frontier.len() == KNOWN_SECTIONS.len()
@@ -5101,13 +5065,6 @@ fn state_complete(state: &StateEvidence) -> bool {
         && state.stamp_generation > 0
         && !state.lifecycle_machine.is_empty()
         && !state.config_hash.is_empty()
-        && state.baseline_id == BASELINE_ID
-        && state.schema_epoch == SCHEMA_EPOCH
-        && state.gate_source_hashes.len() == 5
-        && state
-            .gate_source_hashes
-            .iter()
-            .all(|(_, value)| value != "differential" && !value.is_empty())
         && state.section_revision_set.len() >= READY_SECTIONS.len()
         && state.sections.len() == KNOWN_SECTIONS.len()
         && state.dirty_frontier.len() == KNOWN_SECTIONS.len()
@@ -5212,7 +5169,7 @@ fn seed_differential_ready_sections(world: &mut VoxelWorld) -> Result<(), String
     for id in READY_SECTIONS {
         revisions.insert((*id).into(), next);
     }
-    let stamp = GeneratedRevisionStamp {
+    let stamp = RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: view.stamp().world_id.clone(),
         context_id: view.stamp().context_id.clone(),
@@ -5239,70 +5196,19 @@ fn seed_differential_ready_sections(world: &mut VoxelWorld) -> Result<(), String
 }
 
 fn differential_snapshot(label: &str) -> Result<Arc<VoxelConfigSnapshot>, String> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.into(),
-        voxel_head: "61cb864978dedfe9bdf7b687fea08660b31469f1".into(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".into(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".into(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa".into(),
-    };
-    let digests = P0_DECISION_GATES
-        .iter()
-        .map(|gate| {
-            (
-                (*gate).into(),
-                hex32(&sha256(format!("approved-{gate}").as_bytes())),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    let evidence = P0_DECISION_GATES
-        .iter()
-        .map(|gate| DecisionEvidence {
-            gate_id: (*gate).into(),
-            approval_status: "approved".into(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*gate].clone(),
-        })
-        .collect::<Vec<_>>();
-    let generated = GeneratedVoxelConfig {
+    let config = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: config_hash_for(label),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&generated, &evidence).map_err(|e| e.to_string())
+    VoxelConfigSnapshot::load(&config).map_err(|e| e.to_string())
 }
 
 fn config_hash_for(label: &str) -> String {
     hex32(&sha256(label.as_bytes()))
-}
-
-fn provenance_pairs() -> Vec<(String, String)> {
-    vec![
-        ("architectureBaselineId".into(), BASELINE_ID.into()),
-        (
-            "voxelHead".into(),
-            "61cb864978dedfe9bdf7b687fea08660b31469f1".into(),
-        ),
-        (
-            "architectureMirrorSha256".into(),
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".into(),
-        ),
-        (
-            "v13DecisionGatesSha256".into(),
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".into(),
-        ),
-        (
-            "blueprintSha256".into(),
-            "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa".into(),
-        ),
-    ]
 }
 
 fn world_revision(value: u64) -> Result<WorldRevision, String> {
@@ -5367,13 +5273,13 @@ fn oracle_route(sequence: u64) -> &'static str {
 
 fn rust_route(sequence: u64) -> &'static str {
     match sequence {
-        0..=2 => "GeneratedVoxelWorldPortAdapter.admit(SimulationSession)",
-        3 | 4 => "GeneratedVoxelWorldPortAdapter.query",
-        5 => "GeneratedVoxelWorldPortAdapter.prepare_mutation",
-        6 | 7 => "GeneratedVoxelWorldPortAdapter.commit+prepare_mutation",
-        8 => "GeneratedVoxelWorldPortAdapter.capture+RestorePreflight",
-        9 => "GeneratedVoxelWorldPortAdapter.apply_durability_ack+restore",
-        10 => "GeneratedVoxelWorldPortAdapter.shutdown",
+        0..=2 => "VoxelWorldPortAdapter.admit(SimulationSession)",
+        3 | 4 => "VoxelWorldPortAdapter.query",
+        5 => "VoxelWorldPortAdapter.prepare_mutation",
+        6 | 7 => "VoxelWorldPortAdapter.commit+prepare_mutation",
+        8 => "VoxelWorldPortAdapter.capture+RestorePreflight",
+        9 => "VoxelWorldPortAdapter.apply_durability_ack+restore",
+        10 => "VoxelWorldPortAdapter.shutdown",
         _ => "invalid",
     }
 }
@@ -5385,7 +5291,7 @@ fn rust_stale_replay_probe(
     let mut stale = request.clone();
     let generation = run.world.state_view().instance_generation();
     stale.origin = rust_origin(&run.world, "stale-replay", None, Some(generation + 1))?;
-    let result = GeneratedVoxelWorldPortAdapter::new(&mut run.world).prepare_mutation(stale);
+    let result = VoxelWorldPortAdapter::new(&mut run.world).prepare_mutation(stale);
     let (ok, error) = match result {
         Ok(_) => (true, None),
         Err(e) => (false, Some(e.error_id().into())),

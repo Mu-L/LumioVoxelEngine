@@ -1,7 +1,7 @@
 //! R-00145: B2 matrix against shipped Query / Mutation / World / Restore APIs.
 
 use lumio_voxel_contracts::voxel_world::SECTION_PRESENCE;
-use lumio_voxel_contracts::{BASELINE_ID, STABLE_ERROR_IDS};
+
 use lumio_voxel_test_support::b2_harness::{
     MATRIX_ROWS, case_capture_encode_outside_barrier, case_commit_atomic_duplicate,
     case_dual_world_fault_isolation, case_durability_ack_covers_latest,
@@ -18,8 +18,6 @@ fn assert_case_ok(case: lumio_voxel_test_support::b2_harness::B2CaseResult) {
 #[test]
 fn run_b2_matrix_covers_twelve_rows() {
     let report = run_b2_matrix();
-    assert_eq!(report.baseline, BASELINE_ID);
-    assert_eq!(report.baseline, "LGE-V1.4-2026-08-27");
     assert_eq!(report.cases.len(), MATRIX_ROWS);
     assert_eq!(MATRIX_ROWS, 12);
     assert!(
@@ -87,7 +85,5 @@ fn port_adapter_query_prepare_commit_capture() {
 fn fault_injector_pre_publication_is_recoverable() {
     assert!(FaultInjector::recoverable(FaultPoint::PrePublication));
     assert!(!FaultInjector::recoverable(FaultPoint::PostPublication));
-    assert!(STABLE_ERROR_IDS.contains(&FaultInjector::error_id(FaultPoint::PrePublication)));
-    assert!(STABLE_ERROR_IDS.contains(&FaultInjector::error_id(FaultPoint::PostPublication)));
     assert_case_ok(case_fault_injector_recoverable());
 }

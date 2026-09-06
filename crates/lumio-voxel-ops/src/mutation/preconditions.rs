@@ -5,7 +5,6 @@
 use super::fingerprint::MutationRequest;
 use super::plan::MutationPlanner;
 use super::receipt_ledger::{LedgerError, LookupOutcome, ReceiptLedger, ReplayDisposition};
-use lumio_voxel_contracts::STABLE_ERROR_IDS;
 use lumio_voxel_contracts::voxel_world::{self as vw, SECTION_PRESENCE};
 use lumio_voxel_domain::publication::{PublishError, PublishedReadView};
 use lumio_voxel_domain::section::{DirtyError, SectionError};
@@ -30,21 +29,21 @@ impl MutationError {
 
     pub(crate) fn invalid_handle() -> Self {
         Self {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
             disposition: None,
         }
     }
 
     pub(crate) fn session_mismatch() -> Self {
         Self {
-            error_id: stable("SessionMismatch"),
+            error_id: "SessionMismatch",
             disposition: None,
         }
     }
 
     pub(crate) fn stale_epoch() -> Self {
         Self {
-            error_id: stable("StaleEpoch"),
+            error_id: "StaleEpoch",
             disposition: None,
         }
     }
@@ -105,7 +104,7 @@ impl MutationError {
 
     pub(crate) fn snapshot_base_mismatch() -> Self {
         Self {
-            error_id: stable("SnapshotBaseMismatch"),
+            error_id: "SnapshotBaseMismatch",
             disposition: None,
         }
     }
@@ -205,9 +204,4 @@ impl MutationPreconditions {
 
         Ok(())
     }
-}
-
-fn stable(id: &'static str) -> &'static str {
-    debug_assert!(STABLE_ERROR_IDS.contains(&id));
-    id
 }

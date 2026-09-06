@@ -15,7 +15,7 @@ mod prepared_token;
 mod receipt_ledger;
 mod reservation;
 
-pub use commit::{CommitEvidence, GeneratedMutationReceipt, commit};
+pub use commit::{CommitEvidence, MutationReceipt, commit};
 pub use fingerprint::{
     BlockWrite, BlockWriteEntry, MUTATION_RECEIPT_SCHEMA, MutationEntry, MutationRequest,
     MutationWrite, MutationWriteEntry, RequestFingerprint, canonical_fingerprint,

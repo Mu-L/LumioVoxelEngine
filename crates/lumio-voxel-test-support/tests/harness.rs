@@ -1,9 +1,9 @@
 use lumio_voxel_test_support::deterministic_executor::{DeterministicExecutor, Schedule};
 use lumio_voxel_test_support::fault_injection::FaultPoint;
-use lumio_voxel_test_support::reference_harness::{GeneratedVoxelOperation, VoxelPortHarness};
+use lumio_voxel_test_support::reference_harness::{VoxelOperation, VoxelPortHarness};
 
-fn op(seq: u64, payload: &[u8]) -> GeneratedVoxelOperation {
-    GeneratedVoxelOperation {
+fn op(seq: u64, payload: &[u8]) -> VoxelOperation {
+    VoxelOperation {
         schema_id: "voxel-query",
         seq,
         payload: payload.to_vec(),

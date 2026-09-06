@@ -1,11 +1,10 @@
 //! R-00073: immutable payload, four-state slot, directory COW root.
 
-use lumio_voxel_contracts::legacy_baseline;
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_contracts::voxel_world as vw;
 use lumio_voxel_contracts::voxel_world::SECTION_PRESENCE;
-use lumio_voxel_contracts::{MACHINE_IDS, SCHEMA_IDS, is_stable_error_id, sha256};
 use lumio_voxel_domain::section::{
-    SectionDirectoryBuilder, SectionPage, SectionPayload, SectionSlot,
+    SECTION_PAGE_SCHEMA, SectionDirectoryBuilder, SectionPage, SectionPayload, SectionSlot,
 };
 
 fn dense_page(bytes: &[u8]) -> SectionPage {
@@ -16,22 +15,11 @@ fn sample_payload() -> SectionPayload {
     SectionPayload::from_pages([dense_page(b"page-0")]).expect("valid dense uncompressed page")
 }
 
-fn assert_stable_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
-}
-
 #[test]
 fn four_slot_states_map_one_to_one_onto_section_presence() {
     assert_eq!(
         SECTION_PRESENCE,
         &["Ready", "Unchanged", "Pending", "Unavailable"]
-    );
-    assert!(
-        MACHINE_IDS.contains(&legacy_baseline::SECTION_RESIDENCY_MACHINE_ID),
-        "residency is a different generated machine and must not replace presence"
     );
     assert!(!SECTION_PRESENCE.contains(&"Unallocated"));
     assert!(!SECTION_PRESENCE.contains(&"Loading"));
@@ -66,17 +54,15 @@ fn four_slot_states_map_one_to_one_onto_section_presence() {
     assert!(unavailable.payload().is_none());
 
     let payload = sample_payload();
-    assert!(SCHEMA_IDS.contains(&payload.schema_id()));
-    assert_eq!(payload.schema_id(), legacy_baseline::SECTION_PAGE_SCHEMA_ID);
+    assert_eq!(payload.schema_id(), SECTION_PAGE_SCHEMA);
 }
 
 #[test]
-fn illegal_conversion_returns_generated_error_and_leaves_previous_slot_unchanged() {
+fn illegal_conversion_returns_contract_error_and_leaves_previous_slot_unchanged() {
     let slot = SectionSlot::unavailable();
     let before = slot.clone();
     let err = slot.try_convert("Ready", None).unwrap_err();
     assert_eq!(err.error_id(), vw::SECTION_UNAVAILABLE);
-    assert_stable_error(err.error_id());
     assert_eq!(slot, before);
     assert_eq!(slot.presence(), "Unavailable");
     assert!(slot.payload().is_none());
@@ -88,7 +74,6 @@ fn illegal_conversion_returns_generated_error_and_leaves_previous_slot_unchanged
     let root = builder.freeze();
     let err = builder.convert("s:0:0:0", "Ready", None).unwrap_err();
     assert_eq!(err.error_id(), vw::SECTION_UNAVAILABLE);
-    assert_stable_error(err.error_id());
 
     let looked = root
         .lookup("s:0:0:0")
@@ -209,7 +194,6 @@ fn bad_section_id_or_payload_hash_mismatch_fails_with_generated_error() {
     ] {
         let err = builder.insert(bad, slot.clone()).unwrap_err();
         assert_eq!(err.error_id(), vw::UNKNOWN_SECTION_KEY, "id {bad}");
-        assert_stable_error(err.error_id());
         let err = SectionDirectoryBuilder::new()
             .freeze()
             .lookup(bad)
@@ -232,14 +216,12 @@ fn bad_section_id_or_payload_hash_mismatch_fails_with_generated_error() {
     for bad in ["s:2147483648:0:0", "s:-2147483649:0:0"] {
         let err = builder.insert(bad, slot.clone()).unwrap_err();
         assert_eq!(err.error_id(), vw::COORDINATE_OUT_OF_BOUNDS, "id {bad}");
-        assert_stable_error(err.error_id());
     }
 
     // 层号越出 0~15 → section_y_out_of_range。
     for bad in ["s:0:16:0", "s:0:-1:0", "s:0:2147483647:0"] {
         let err = builder.insert(bad, slot.clone()).unwrap_err();
         assert_eq!(err.error_id(), vw::SECTION_Y_OUT_OF_RANGE, "id {bad}");
-        assert_stable_error(err.error_id());
     }
 
     builder
@@ -264,7 +246,6 @@ fn bad_section_id_or_payload_hash_mismatch_fails_with_generated_error() {
         .unwrap_err();
     // 契约 payload.digest-before-interpretation:摘要必须先于任何解释校验。
     assert_eq!(err.error_id(), vw::SECTION_DIGEST_MISMATCH);
-    assert_stable_error(err.error_id());
 }
 
 #[test]

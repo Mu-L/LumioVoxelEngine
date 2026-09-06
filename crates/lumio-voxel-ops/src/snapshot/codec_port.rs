@@ -4,7 +4,6 @@
 
 use super::capture_ref::VoxelCaptureRef;
 use super::manifest_adapter::ManifestAdapter;
-use super::stable;
 use lumio_voxel_contracts::{BoundedBuffer, BufferFull, Hash256, sha256};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,19 +18,19 @@ impl SnapshotError {
 
     pub fn invalid_handle() -> Self {
         Self {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
         }
     }
 
     pub fn budget_exceeded() -> Self {
         Self {
-            error_id: stable("BudgetExceeded"),
+            error_id: "BudgetExceeded",
         }
     }
 
     pub fn loader_cancelled() -> Self {
         Self {
-            error_id: stable("LoaderCancelled"),
+            error_id: "LoaderCancelled",
         }
     }
 }
@@ -99,7 +98,7 @@ impl CaptureWriter for MemoryCaptureWriter {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GeneratedCaptureMetadata {
+pub struct CaptureMetadata {
     payload_hash: Hash256,
     root_identity: [u8; 32],
     world_revision: u64,
@@ -108,7 +107,7 @@ pub struct GeneratedCaptureMetadata {
     byte_len: usize,
 }
 
-impl GeneratedCaptureMetadata {
+impl CaptureMetadata {
     pub fn payload_hash(&self) -> Hash256 {
         self.payload_hash
     }
@@ -138,7 +137,7 @@ impl GeneratedCaptureMetadata {
 pub fn encode_capture(
     capture: &VoxelCaptureRef,
     writer: &mut impl CaptureWriter,
-) -> Result<GeneratedCaptureMetadata, SnapshotError> {
+) -> Result<CaptureMetadata, SnapshotError> {
     if writer.is_cancelled() {
         return Err(SnapshotError::loader_cancelled());
     }
@@ -154,7 +153,7 @@ pub fn encode_capture(
         return Err(SnapshotError::invalid_handle());
     }
     writer.write(&bytes)?;
-    Ok(GeneratedCaptureMetadata {
+    Ok(CaptureMetadata {
         payload_hash: Hash256(sha256(&bytes)),
         root_identity: capture.root_identity(),
         world_revision: capture.stamp().world_revision,
