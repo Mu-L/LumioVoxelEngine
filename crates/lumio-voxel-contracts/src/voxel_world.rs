@@ -15,7 +15,7 @@ pub const CONTRACT_ID: &str = "lumio.voxel-world.v1";
 pub const CONTRACT_VERSION: u32 = 1;
 /// `wire/voxel-world-v1.json` 的 SHA-256。副本被改动即在一致性测试里失败。
 pub const CONTRACT_SHA256: &str =
-    "56d555fd8ab5a5da2e407bd78f499d0e04208fec267af94b4887f1152da7b0d7";
+    "d05dbc52896c535529937ec41d90539f41359a45b42cf05b6a589ef57609939d";
 
 // ------------------------------------------------------------------ identity
 
@@ -235,6 +235,11 @@ pub static VOXEL_WORLD_ERROR_CODES: &[&str] = &[
     "unknown_behavior_template",
     "cell_read_missing_presence",
     "unregistered_block_type",
+    // 写入批次原子性与全量载荷基线(契约 `blockWrite` / `sectionPayload`)。
+    // `write_batch_partially_applied` 是 `write.batch-is-all-or-nothing` 的违约码,与批过大
+    // (`write.batch-size-cap` → `write_batch_too_large`)是两件事,不得互相顶替。
+    "write_batch_partially_applied",
+    "base_revision_on_full_encoding",
 ];
 
 /// 键不是合法 Section 键(前缀 / 元数 / 规范写法任一不合)。
@@ -299,6 +304,11 @@ pub const CELL_OFFSET_OUT_OF_RANGE: &str = "cell_offset_out_of_range";
 pub const UNKNOWN_BEHAVIOR_TEMPLATE: &str = "unknown_behavior_template";
 /// An admitted BlockType has no registered ordinary definition or mapping.
 pub const UNREGISTERED_BLOCK_TYPE: &str = "unregistered_block_type";
+/// 一批写入被部分应用——原子性被破坏,世界停在既非提交前也非提交后的第三种状态。
+/// 与 `write_batch_too_large`(条目数超上限)是两件事,两个码不得混用。
+pub const WRITE_BATCH_PARTIALLY_APPLIED: &str = "write_batch_partially_applied";
+/// Uniform / Palette / Raw 全量编码携带了 `baseSectionRevision`;全量是整体替换,没有基线可对。
+pub const BASE_REVISION_ON_FULL_ENCODING: &str = "base_revision_on_full_encoding";
 
 // ------------------------------------------------------------------- blockId 段
 
