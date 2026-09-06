@@ -294,3 +294,25 @@ fn payload_palette_contains_dead_entry() {
         vw::DEAD_PALETTE_ENTRY_IN_PAYLOAD
     );
 }
+
+/// Contract invalidCase `uniform_payload_carries_base_revision`
+/// (rule `payload.full-encoding-carries-no-base-revision`): a full encoding that
+/// carries `baseSectionRevision` is its own rejection, not an encoding mismatch.
+#[test]
+fn full_encoding_carrying_base_revision_is_its_own_rejection() {
+    let uniform = block(1_000).raw().to_le_bytes().to_vec();
+    let incoming = SectionPayloadEnvelope::from_wire_parts(
+        "s:0:0:0",
+        13,
+        SectionEncoding::Uniform,
+        uniform.len() as u32,
+        sha256(&uniform),
+        Some(12),
+        uniform,
+    );
+
+    assert_eq!(
+        incoming.decode(None).unwrap_err().error_id(),
+        vw::BASE_REVISION_ON_FULL_ENCODING
+    );
+}

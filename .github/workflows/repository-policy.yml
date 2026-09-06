@@ -32,16 +32,32 @@ jobs:
           grep -q '^## Headless Test Surface$' README.md
           grep -q '^## 子模块' README.md
           grep -q '^## 当前阶段与开发节奏$' README.md
+
+  legacy-contract-symbols:
+    name: Legacy contract symbols (ADR 0014)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Validate legacy contract symbols stay out of live code (ADR 0014)
         run: |
           # ADR 0014:退出旧合同制后不留兼容层、不留兜底常量。旧符号一旦写回活代码就红。
-          # pathspec 必须是 'crates/*/src/*'——git pathspec 的 * 跨 /,写成 'crates/*/src'
-          # 会要求路径以 src 结尾,恒零命中,是一道空转门。
+          # 这道门只要「命中为零」就绿,所以它自身的每个前提都必须先被证伪一次,
+          # 否则一个恒零命中的模式会安静地永远放行。下面两条自检就是那两个前提。
+          #
+          # 自检 1(pathspec 有效):pathspec 必须是 'crates/*/src/*'——git pathspec 的 *
+          # 跨 /,写成 'crates/*/src' 会要求路径以 src 结尾,恒零命中,是一道空转门。
           if [ "$(git grep -l 'fn ' -- 'crates/*/src/*' | wc -l)" -eq 0 ]; then
             echo "::error::pathspec 匹配不到任何源文件,这道门是空转的" >&2
             exit 1
           fi
-          # SCHEMA_EPOCH 带词边界:裁决 3 允许本仓自持的 SNAPSHOT_SCHEMA_EPOCH。
+          # 自检 2(阳性对照:\b 真的是词边界):'\bSCHEMA_EPOCH' 这条依赖 \b 被 runner
+          # 的正则实现当词边界处理——裁决 3 允许本仓自持的 SNAPSHOT_SCHEMA_EPOCH,靠的
+          # 正是 SNAPSHOT_ 后面没有词边界。若某 runner 把 \b 当字面 b,该模式会恒零命中、
+          # 静默永不匹配。拿一个必然存在的符号做阳性对照:同一个 \b 语义必须命中。
+          if ! git grep -q '\bSNAPSHOT_SCHEMA_EPOCH' -- 'crates/*/src/*'; then
+            echo "::error::阳性对照落空:'\bSNAPSHOT_SCHEMA_EPOCH' 在 crates/*/src/** 里零命中。要么该符号真被删了,要么本 runner 的 \b 不是词边界——后者会让 '\bSCHEMA_EPOCH' 这道门空转" >&2
+            exit 1
+          fi
           set +e
           git grep -n \
             -e 'Generated[A-Z]' \
