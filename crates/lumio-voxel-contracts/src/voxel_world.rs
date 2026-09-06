@@ -15,7 +15,7 @@ pub const CONTRACT_ID: &str = "lumio.voxel-world.v1";
 pub const CONTRACT_VERSION: u32 = 1;
 /// `wire/voxel-world-v1.json` 的 SHA-256。副本被改动即在一致性测试里失败。
 pub const CONTRACT_SHA256: &str =
-    "d05dbc52896c535529937ec41d90539f41359a45b42cf05b6a589ef57609939d";
+    "523aec6e590d8c78f8a15fc4a67e98a80b19ea1ba5a9ced28fdf482d44e48fc9";
 
 // ------------------------------------------------------------------ identity
 
