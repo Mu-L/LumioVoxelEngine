@@ -2,10 +2,10 @@
 
 #![forbid(unsafe_code)]
 
-use super::WorldError;
 use super::admission::WorldEndpoint;
 use super::residency::RegionPinManager;
 use super::state::{WorldState, simulation_session_machine};
+use super::{WorldError, WorldLimits};
 use lumio_voxel_domain::config_snapshot::{CapabilityView, HostCapabilitySet, VoxelConfigSnapshot};
 use lumio_voxel_domain::publication::{PublicationAuthority, PublishedStateRoot};
 use lumio_voxel_domain::revision::{PinRegistry, REVISION_STAMP_SCHEMA, RevisionStamp};
@@ -16,10 +16,6 @@ use lumio_voxel_ops::query::{QueryExecutor, QueryPlanner};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-const PIN_CAPACITY: usize = 16;
-const LEDGER_CAPACITY: usize = 16;
-const QUERY_SECTION_CAPACITY: usize = 16;
 
 static NEXT_INSTANCE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
@@ -109,6 +105,7 @@ pub(crate) struct WorldInstance {
     pub(crate) world_context_id: String,
     pub(crate) generation: u64,
     pub(crate) snapshot: Arc<VoxelConfigSnapshot>,
+    pub(crate) limits: WorldLimits,
     pub(crate) state: WorldState,
     pub(crate) authority: PublicationAuthority,
     pub(crate) ledger: ReceiptLedger,
@@ -159,6 +156,16 @@ impl VoxelWorld {
         descriptor: WorldDescriptor,
         snapshot: Arc<VoxelConfigSnapshot>,
     ) -> Result<Self, WorldError> {
+        Self::create_with_limits(descriptor, snapshot, WorldLimits::default())
+    }
+
+    /// Create with host policy without changing the public wire descriptor.
+    pub fn create_with_limits(
+        descriptor: WorldDescriptor,
+        snapshot: Arc<VoxelConfigSnapshot>,
+        limits: WorldLimits,
+    ) -> Result<Self, WorldError> {
+        let limits = limits.validate()?;
         let role = intern_role(&descriptor.role)?;
         if descriptor.world_context_id.is_empty() || descriptor.config.world_id.is_empty() {
             return Err(WorldError::invalid_handle());
@@ -170,7 +177,7 @@ impl VoxelWorld {
         let world_context_id = descriptor.world_context_id;
         let pins = PinRegistry::from_approved_snapshot(
             Arc::clone(&snapshot),
-            PIN_CAPACITY,
+            limits.max_pinned_revisions,
             world_context_id.as_str(),
             generation,
         );
@@ -183,9 +190,10 @@ impl VoxelWorld {
             root,
         )
         .map_err(|err| WorldError::mapped(err.error_id()))?;
-        let ledger = ReceiptLedger::from_approved_snapshot(Arc::clone(&snapshot), LEDGER_CAPACITY)
-            .map_err(|err| WorldError::mapped(err.error_id()))?;
-        let query_planner = bind_query_planner(Arc::clone(&snapshot))?;
+        let ledger =
+            ReceiptLedger::from_approved_snapshot(Arc::clone(&snapshot), limits.max_receipts)
+                .map_err(|err| WorldError::mapped(err.error_id()))?;
+        let query_planner = bind_query_planner(Arc::clone(&snapshot), limits.max_query_sections)?;
 
         Ok(Self {
             instance: WorldInstance {
@@ -194,6 +202,7 @@ impl VoxelWorld {
                 world_context_id,
                 generation,
                 snapshot,
+                limits,
                 state: WorldState::created(),
                 authority,
                 ledger,
@@ -202,6 +211,15 @@ impl VoxelWorld {
                 region_pins: None,
             },
         })
+    }
+
+    pub fn limits(&self) -> WorldLimits {
+        self.instance.limits
+    }
+
+    /// Prepared plus applied receipts. Hosts can observe pressure before refusal.
+    pub fn retained_receipt_count(&self) -> usize {
+        self.instance.ledger.len()
     }
 
     pub fn endpoint(&mut self) -> WorldEndpoint<'_> {
@@ -270,12 +288,16 @@ pub fn intern_local_embedded_pair(
 }
 
 fn allocate_generation() -> Result<u64, WorldError> {
-    let generation = NEXT_INSTANCE_GENERATION.fetch_add(1, Ordering::Relaxed);
-    if generation == 0 {
-        Err(WorldError::invalid_handle())
-    } else {
-        Ok(generation)
-    }
+    allocate_from(&NEXT_INSTANCE_GENERATION)
+}
+
+fn allocate_from(counter: &AtomicU64) -> Result<u64, WorldError> {
+    // Zero is invalid; MAX is a permanent exhausted sentinel, never wrapped to 1.
+    counter
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            if next == 0 { None } else { next.checked_add(1) }
+        })
+        .map_err(|_| WorldError::invalid_handle())
 }
 
 fn validate_capabilities(
@@ -291,8 +313,11 @@ fn validate_capabilities(
     Ok(())
 }
 
-fn bind_query_planner(snapshot: Arc<VoxelConfigSnapshot>) -> Result<QueryPlanner, WorldError> {
-    let planner = QueryPlanner::from_approved_snapshot(snapshot, QUERY_SECTION_CAPACITY)
+fn bind_query_planner(
+    snapshot: Arc<VoxelConfigSnapshot>,
+    max_sections: usize,
+) -> Result<QueryPlanner, WorldError> {
+    let planner = QueryPlanner::from_approved_snapshot(snapshot, max_sections)
         .map_err(|err| WorldError::mapped(err.error_id()))?;
     let _: QueryExecutor = QueryExecutor;
     Ok(planner)
@@ -315,4 +340,45 @@ fn initial_root(
     let dirty = DirtyFrontier::new(world_id, generation)
         .map_err(|err| WorldError::mapped(err.error_id()))?;
     Ok(PublishedStateRoot::new(stamp, directory, dirty))
+}
+
+#[cfg(test)]
+mod generation_tests {
+    use super::*;
+
+    #[test]
+    fn generation_exhaustion_is_permanent() {
+        let counter = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(allocate_from(&counter).unwrap(), u64::MAX - 1);
+        for _ in 0..3 {
+            assert_eq!(
+                allocate_from(&counter).unwrap_err().error_id(),
+                "InvalidHandle"
+            );
+            assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+        }
+        assert!(allocate_from(&AtomicU64::new(0)).is_err());
+    }
+
+    #[test]
+    fn concurrent_allocations_are_unique() {
+        let counter = AtomicU64::new(1);
+        std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        (0..64)
+                            .map(|_| allocate_from(&counter).unwrap())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            let mut ids: Vec<_> = jobs
+                .into_iter()
+                .flat_map(|job| job.join().unwrap())
+                .collect();
+            ids.sort_unstable();
+            assert_eq!(ids, (1..=512).collect::<Vec<_>>());
+        });
+    }
 }

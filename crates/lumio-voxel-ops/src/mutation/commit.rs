@@ -65,7 +65,7 @@ pub fn commit(
     let plan = MutationPlanner::build(prepared.request())?;
     let replacement = prepared.replacement().clone();
     let overlay_ids = overlay_ids(view.stamp().section_revision_set.keys(), plan.section_ids());
-    let new_dir = overlay_directory(&view, &replacement, &overlay_ids)?;
+    let new_dir = overlay_directory(&view, &replacement, plan.section_ids())?;
     let new_stamp = build_stamp(&prepared, &view, &replacement, &overlay_ids)?;
     let new_root = PublishedStateRoot::new(new_stamp, new_dir, prepared.dirty().clone());
     let world = world_revision(prepared.target_world_revision())?;
@@ -174,32 +174,22 @@ fn overlay_ids<'a>(
     ids
 }
 
-fn overlay_directory(
+fn overlay_directory<'a>(
     view: &PublishedReadView,
     replacement: &SectionReplacement,
-    overlay_ids: &BTreeSet<String>,
+    changed_ids: impl Iterator<Item = &'a str>,
 ) -> Result<SectionDirectoryRoot, MutationError> {
-    let mut builder = SectionDirectoryBuilder::new();
-    for id in overlay_ids {
-        let slot = match replacement
+    // Presence entries are not necessarily members of the revision map. Starting
+    // from stamp keys dropped unrelated Pending/Unchanged/Unavailable sections.
+    let mut builder = SectionDirectoryBuilder::from_root(view.directory());
+    for id in changed_ids {
+        let slot = replacement
             .set()
             .get(id)
             .map_err(MutationError::from_section)?
-            .cloned()
-        {
-            Some(slot) => slot,
-            None => match view
-                .directory()
-                .lookup(id)
-                .map_err(MutationError::from_section)?
-                .cloned()
-            {
-                Some(slot) => slot,
-                None => continue,
-            },
-        };
+            .ok_or_else(MutationError::invalid_handle)?;
         builder
-            .insert(id, slot)
+            .insert(id, slot.clone())
             .map_err(MutationError::from_section)?;
     }
     Ok(builder.freeze())

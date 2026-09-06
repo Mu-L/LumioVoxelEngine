@@ -126,6 +126,14 @@ impl ReceiptLedger {
         self.snapshot.config_hash()
     }
 
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn reserve_count(&self) -> usize {
         self.reserve_count
     }

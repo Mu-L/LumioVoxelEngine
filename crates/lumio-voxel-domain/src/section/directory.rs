@@ -57,6 +57,14 @@ impl SectionDirectoryBuilder {
         }
     }
 
+    /// Share the immutable directory until the first actual edit. BTreeMap COW
+    /// still clones its nodes once; this is not a persistent O(log n) tree.
+    pub fn from_root(root: &SectionDirectoryRoot) -> Self {
+        Self {
+            entries: Arc::clone(&root.entries),
+        }
+    }
+
     pub fn insert(&mut self, section_id: &str, slot: SectionSlot) -> Result<(), SectionError> {
         let id = SectionId::parse(section_id)?;
         Arc::make_mut(&mut self.entries).insert(id, slot);

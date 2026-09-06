@@ -58,7 +58,7 @@ Host 负责创建和销毁实例，VoxelEngine 负责实例内部状态转换和
 | [`snapshot`](modules/snapshot/README.md) | Capture/Diff、Canonical 编码、校验与恢复输入 | M9 | `lumio-voxel-ops` |
 | [`world`](modules/world/README.md) | 实例组装、Role/Context 生命周期、Barrier 入口与驻留 | M6 / M8 | `lumio-voxel-world` |
 
-尚无代码的模块（M3 光照、M4 网格生成与零拷贝交付、M6a 方块与实体绑定、M10 存档可读性）不建目录；开卡时再按本表加行。
+尚无代码的模块（M3 光照、M4 网格生成与零拷贝交付、M10 存档可读性）不建目录；开卡时再按本表加行。M6a 已有 `domain::binding` 的稀疏引用与局部绑定实现，但跨 ECS 的真实提交与恢复仍待集成验收。
 
 ## 职责
 
@@ -92,6 +92,8 @@ Voxel Prepare 只验证 Section 可用性、Cell 可写性、Expected SectionRev
 NativeCore 提供通用空间 Kernel；本仓库根据 Section/Block/遮挡/可用性生成 `VoxelInterestCandidateBatch` 或 `VoxelSpatialProjection`。Runtime/Server 再结合 Role、Owner、Permission、带宽和 Interest 做最终过滤。结果必须包含 Revision、批次上限、查询预算、超时和取消原因，不暴露内部指针或 Storage。
 
 ## 序列化、存档与恢复
+
+以下是目标职责；当前 Capture/Restore 仅完成元数据与目录框架，完整方块冷恢复尚未实现，见本文末尾的已知边界。
 
 - Section 页、World Snapshot、Diff 和 Migration 输入使用版本化 Canonical Serializer。
 - Envelope 至少包含 Magic、SchemaVersion、Length、World/Section Revision、Hash/Checksum、Compression 和可选加密信息。
@@ -159,3 +161,15 @@ Manifest 至少包含 Voxel API/ABI、World/Section Schema、压缩字典、Migr
 3. **Vertical Slice**：接入 CrossWorldTxn、Local 双实例、Snapshot/WAL 和 Reference Differential。
 4. **Production Hardening**：Streaming/AOI/恢复/损坏注入和性能曲线。
 5. **P2**：复杂空间优化、可替换后端和跨服迁移；不改变 V1 权威边界。物理 crate 仍只允许 [0006](.spec/decisions/0006-crate-map.md) 登记的那几个。
+
+## 运行预算与已知边界
+
+`VoxelWorld::create_with_limits` 和 `VoxelWorldPortAdapter::create_world_with_limits` 接受 `WorldLimits`，
+分别限制同时固定的 Revision、已接纳事务回执、单次查询 Section 数。默认值是开发策略，
+不是公共契约上限，也不是服务器容量保证；宿主可读取 `limits()` 和
+`retained_receipt_count()` 观察压力。达到回执上限拒绝新事务，已有相同请求仍可重放。
+**不会按 FIFO/TTL 丢弃已完成回执**：没有上层耐久检查点与安全重放边界时，淘汰可能导致重复应用。
+
+当前 `encode_capture`/`RestoreShadowBuilder` 仍是元数据快照和目录恢复框架，
+**不是完整方块数据的冷恢复实现**；不得作为商业世界持久化验收通过的证据。
+本轮已修项、测试和剩余工作见 [运行期修复记录](docs/reviews/2026-09-06-runtime-hardening.md)。

@@ -42,3 +42,4 @@
 | [0012](0012-canonical-decode-cost-and-refusal-naming.md) | Canonical 解码按输入长度线性收费，长度上限与拒绝命名都不落本库 | 生效 |
 | [0013](0013-voxel-world-contract-and-section-rename.md) | 体素公共语义改从 `voxel-world-v1.json` 取，16³ 数据单元改名 Section | 生效 |
 | [0014](0014-exit-legacy-baseline-contract-regime.md) | 退出旧合同制：删复印件与 CI 校对、删 generated 树与 legacy_baseline，公共语义只从活契约取 | 生效 |
+| [0015](0015-runtime-limits-and-publication-lifecycle.md) | 宿主预算与发布生命周期修复，保持摘要语义 | 生效 |

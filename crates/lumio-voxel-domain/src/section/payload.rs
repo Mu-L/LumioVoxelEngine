@@ -85,6 +85,7 @@ pub struct SectionPayload {
     // Block storage is an adapter-local baseline used by structured mutation.
     // Generic callers may omit it when their page bytes are not voxel storage.
     storage: Option<super::SectionStorage>,
+    storage_digest: Option<[u8; 32]>,
     _extent_family: IsolatedCubicExtentFamily,
 }
 
@@ -132,10 +133,15 @@ impl SectionPayload {
                 ));
             }
         }
+        // Validation above proved the sidecar has exactly these immutable bytes.
+        // Reuse the sealed digest instead of expanding/compacting 4096 cells each
+        // time a world root or replacement asks for the same content identity.
+        let storage_digest = storage.as_ref().map(|_| sealed[0].digest);
         Ok(Self {
             schema_id,
             pages: Arc::from(sealed),
             storage,
+            storage_digest,
             _extent_family: IsolatedCubicExtentFamily,
         })
     }
@@ -160,10 +166,10 @@ impl SectionPayload {
             bytes.extend_from_slice(&(page.bytes.len() as u64).to_le_bytes());
             bytes.extend_from_slice(&page.digest);
         }
-        match &self.storage {
-            Some(storage) => {
+        match self.storage_digest {
+            Some(digest) => {
                 bytes.push(1);
-                bytes.extend_from_slice(&storage.identity_digest());
+                bytes.extend_from_slice(&digest);
             }
             None => bytes.push(0),
         }
@@ -178,9 +184,7 @@ impl SectionPayload {
     }
 
     pub(crate) fn storage_identity_digest(&self) -> Option<[u8; 32]> {
-        self.storage
-            .as_ref()
-            .map(|storage| storage.identity_digest())
+        self.storage_digest
     }
 }
 
@@ -190,4 +194,40 @@ fn intern_name(name: &str, generated: &[&'static str]) -> Result<&'static str, S
         .copied()
         .find(|item| *item == name)
         .ok_or_else(SectionError::invalid_handle)
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+    use crate::block::{BlockId, CellOffset};
+    use crate::section::SectionStorage;
+
+    #[test]
+    fn cached_storage_digest_matches_canonical_bytes_and_survives_cow() {
+        for kinds in [1, 2, 256, 300] {
+            let cells: Vec<_> = (0..4096).map(|i| BlockId::from_raw(i % kinds)).collect();
+            let mut storage = SectionStorage::from_cells(&cells).unwrap();
+            let expected = sha256(&storage.encoded_payload());
+            let payload = SectionPayload::from_storage(storage.clone()).unwrap();
+            let identity = payload.identity_digest();
+            storage.write(CellOffset::new(0).unwrap(), BlockId::from_raw(999));
+            assert_eq!(payload.storage_identity_digest(), Some(expected));
+            assert_eq!(payload.identity_digest(), identity);
+            assert_eq!(
+                payload.storage().unwrap().read(CellOffset::new(0).unwrap()),
+                BlockId::from_raw(0)
+            );
+            let changed = SectionPayload::from_storage(storage).unwrap();
+            assert_ne!(
+                changed.storage_identity_digest(),
+                payload.storage_identity_digest()
+            );
+        }
+        assert_eq!(
+            SectionPayload::from_pages([])
+                .unwrap()
+                .storage_identity_digest(),
+            None
+        );
+    }
 }

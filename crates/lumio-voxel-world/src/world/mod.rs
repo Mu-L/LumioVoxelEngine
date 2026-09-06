@@ -12,6 +12,7 @@ mod durability_ack;
 mod events;
 mod fault;
 mod instance;
+mod limits;
 mod residency;
 mod restore;
 mod routing;
@@ -31,6 +32,7 @@ pub use instance::{
     InstanceGenerationGuard, VOXEL_WORLD_ROLES, VoxelWorld, WorldConfigAdapter, WorldDescriptor,
     WorldStateView, intern_local_embedded_pair, intern_role,
 };
+pub use limits::WorldLimits;
 pub use residency::{
     NoPinExemption, PinBudget, PinExemptionError, PinExemptionHook, PinHandle, PinId, PinReadiness,
     PinStatus, RegionPinError, RegionPinManager, RegionPinStatus, ResidencyPinError, UnloadReceipt,

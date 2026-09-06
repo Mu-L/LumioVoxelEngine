@@ -71,6 +71,23 @@ impl PreparedPublication {
 }
 
 /// One-shot publication token. Not `Clone`; `publish_once` consumes it by value.
+///
+/// The type system prevents replay without an unbounded published-id ledger.
+///
+/// ```compile_fail,E0382
+/// use lumio_voxel_domain::publication::{PublicationAuthority, PublicationToken};
+/// fn replay(authority: &PublicationAuthority, token: PublicationToken) {
+///     let _ = authority.publish_once(token);
+///     let _ = authority.publish_once(token);
+/// }
+/// ```
+///
+/// ```compile_fail,E0599
+/// use lumio_voxel_domain::publication::PublicationToken;
+/// fn duplicate(token: PublicationToken) {
+///     let _ = token.clone();
+/// }
+/// ```
 #[derive(Debug)]
 pub struct PublicationToken {
     pub(crate) id: u64,

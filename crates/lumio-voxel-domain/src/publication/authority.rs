@@ -9,13 +9,11 @@ use crate::revision::{
     PinRegistry, REVISION_STAMP_SCHEMA, ReadViewLease, RevisionPin, RevisionStamp, WorldRevision,
 };
 use crate::section::{DirtyFrontier, SectionDirectoryRoot, SectionReplacement};
-use std::collections::BTreeSet;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 struct PublishedCell {
     root: Arc<PublishedStateRoot>,
     pin: RevisionPin,
-    used_ids: BTreeSet<u64>,
     next_token_id: u64,
 }
 
@@ -53,7 +51,6 @@ impl PublicationAuthority {
             inner: RwLock::new(PublishedCell {
                 root: Arc::new(initial),
                 pin,
-                used_ids: BTreeSet::new(),
                 next_token_id: 0,
             }),
         })
@@ -104,37 +101,29 @@ impl PublicationAuthority {
 
     pub fn publish_once(&self, token: PublicationToken) -> Result<PublishedReadView, PublishError> {
         let mut inner = self.write();
-        // Identity first: `token.id` comes from a per-authority counter, so ids from a
-        // foreign world/session collide numerically with our own. Interpreting a foreign
-        // id against this authority's one-shot ledger would report HandleDoubleRelease
-        // for a token that was never published anywhere.
+        // Token ids are authority-local, so validate the complete owner identity.
         if token.world_id != self.world_id || token.context_id != self.context_id {
             return Err(PublishError::session_mismatch());
         }
         if token.generation != self.generation {
             return Err(PublishError::stale_epoch());
         }
-        // Defense in depth, and currently unreachable through the public API: `seal` is
-        // one-shot and `PublicationToken` is neither `Clone` nor re-constructible outside
-        // this module, so a genuine double release is caught there. Before the ordering
-        // above was corrected this branch *was* reachable — but only for foreign tokens
-        // whose per-authority id happened to collide, i.e. it only ever fired wrongly.
-        // Keep it: it is the invariant's last line, not dead code to delete.
-        if inner.used_ids.contains(&token.id) {
-            return Err(PublishError::handle_double_release());
-        }
+        // A token is move-only, sealed once, and cannot be constructed by callers.
+        // Keeping every published id would add unbounded history without strengthening
+        // that invariant. World/context/generation and base identity are still checked.
         if token.base_identity != inner.root.identity() {
             return Err(PublishError::snapshot_base_mismatch());
         }
 
         let view_root = Arc::clone(&token.new_root);
         let view_pin = token.pin.clone();
-        inner.used_ids.insert(token.id);
-
-        // Sole visible write: move the prebuilt Arc. No alloc/I/O/callback after this.
-        inner.root = token.new_root;
-        inner.pin = token.pin;
+        // Swap the complete cut under the lock, but retire the old root and its pin
+        // outside it. Last-owner destruction may traverse a large directory or lock
+        // the pin registry; neither belongs in the publication critical section.
+        let retired_root = std::mem::replace(&mut inner.root, token.new_root);
+        let retired_pin = std::mem::replace(&mut inner.pin, token.pin);
         drop(inner);
+        drop((retired_root, retired_pin));
 
         Ok(PublishedReadView::from_parts(view_root, view_pin))
     }

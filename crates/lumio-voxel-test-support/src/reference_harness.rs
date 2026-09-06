@@ -5143,7 +5143,7 @@ fn rust_origin(
 }
 
 fn create_differential_world() -> Result<VoxelWorld, String> {
-    VoxelWorld::create(
+    VoxelWorld::create_with_limits(
         WorldDescriptor {
             role: "Authority".into(),
             world_context_id: CONTEXT_ID.into(),
@@ -5153,6 +5153,12 @@ fn create_differential_world() -> Result<VoxelWorld, String> {
             },
         },
         differential_snapshot(CONFIG_LABEL)?,
+        // The oracle's budget is fixture input, not the engine default policy.
+        // Keep both legs on this explicit budget; do not change the golden.
+        lumio_voxel_world::world::WorldLimits {
+            max_query_sections: QUERY_BUDGET,
+            ..lumio_voxel_world::world::WorldLimits::default()
+        },
     )
     .map_err(|e| e.error_id().to_string())
 }

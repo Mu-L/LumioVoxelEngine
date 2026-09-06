@@ -3,7 +3,6 @@
 use super::SectionError;
 use crate::block::{BlockId, CellOffset, WorldY};
 use crate::key::SectionId;
-use lumio_voxel_contracts::sha256;
 use lumio_voxel_contracts::voxel_world as vw;
 use std::mem::size_of;
 use std::sync::Arc;
@@ -158,10 +157,6 @@ impl SectionStorage {
                 payload
             }
         }
-    }
-
-    pub(crate) fn identity_digest(&self) -> [u8; 32] {
-        sha256(&self.encoded_payload())
     }
 
     pub fn read(&self, offset: CellOffset) -> BlockId {

@@ -1,0 +1,47 @@
+name: Portable Runtime
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    name: Runtime (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Test and archive the exact source commit. Repository Policy separately
+          # checks GitHub's proposed merge against main.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - name: Check minimal feature build
+        run: cargo check --workspace --no-default-features --locked
+      - name: Run real workspace tests
+        run: cargo test --workspace --all-features --locked
+      - name: Package exact tested source
+        if: always() && runner.os == 'Linux'
+        run: git archive --format=zip --prefix=LumioVoxelEngine/ --output=LumioVoxelEngine-source.zip HEAD
+      - name: Retain source package
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: voxel-source-${{ github.sha }}
+          path: LumioVoxelEngine-source.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -5,8 +5,8 @@
 use super::error_mapping::PortError;
 use crate::world::{
     AckEvidence, AdmittedCommand, CaptureEvidence, DurabilityReceipt, RestoreReceipt,
-    RuntimeSnapshotCut, VoxelWorld, WorldCommand, WorldDescriptor, WorldEventSink, WorldRouter,
-    WorldShutdown,
+    RuntimeSnapshotCut, VoxelWorld, WorldCommand, WorldDescriptor, WorldEventSink, WorldLimits,
+    WorldRouter, WorldShutdown,
 };
 use lumio_voxel_domain::config_snapshot::VoxelConfigSnapshot;
 use lumio_voxel_ops::async_support::{OriginEnvelope, OriginToken};
@@ -96,6 +96,15 @@ impl<'a> VoxelWorldPortAdapter<'a> {
         snapshot: Arc<VoxelConfigSnapshot>,
     ) -> Result<VoxelWorld, PortError> {
         VoxelWorld::create(descriptor, snapshot).map_err(PortError::from)
+    }
+
+    /// Host-side constructor with explicit resource policy; not a wire method.
+    pub fn create_world_with_limits(
+        descriptor: WorldDescriptor,
+        snapshot: Arc<VoxelConfigSnapshot>,
+        limits: WorldLimits,
+    ) -> Result<VoxelWorld, PortError> {
+        VoxelWorld::create_with_limits(descriptor, snapshot, limits).map_err(PortError::from)
     }
 
     pub fn new(world: &'a mut VoxelWorld) -> Self {
