@@ -37,13 +37,21 @@
 #   VOCABULARY_PATTERNS_*(snake / SCREAMING 一组,CamelCase 一组)——把**具体方块名**写进引擎物理面。
 #     引擎是通用的:水、岩浆这类具体材质名属于游戏的材质表,不属于引擎的碰撞代码。
 #
-# ## 豁免(air 哨兵)
+# ## 豁免(只有 air 哨兵,窄于契约)
 #
-# `raw() == 0` **不算违例**,且是唯一豁免。依据是契约 `blockId.resolution.builtInSentinels`:
-# type 0 是 air,`"ordinaryMaterialAndTemplateLookup": false`——契约明文规定它**不走**普通材质
-# 查表,所以物理面必须、也只能自己认出它。判据 1 用 `[1-9]|0[xXoObB]` 排除十进制 0 来实现这条豁免;
+# `raw() == 0` **不算违例**,且是唯一豁免。判据 1 用 `[1-9]|0[xXoObB]` 排除十进制 0 来实现它;
 # 换言之豁免的是「与十进制字面量 0 比较」这一种写法,`raw() == 0x0` 或 `== BlockType::AIR` 会红——
 # 那是刻意的:哨兵只留一种规范写法,才守得住。
+#
+# **注意本豁免窄于契约,这是有意的保守选择,不是对契约的复述。**
+# 契约 `blockId.resolution.builtInSentinels` 的 `"ordinaryMaterialAndTemplateLookup": false`
+# 对 **0/1/2/3 四个哨兵共同生效**(0=air、1=error-block、2=ecs-occupancy、3=structure-placeholder),
+# 不是 air 专属。本守卫只豁免 type 0,所以 `BlockType::ERROR` /
+# `ENTITY_OCCUPANCY_PLACEHOLDER` / `STRUCTURE_PLACEHOLDER` 出现在扫描面里会被判红。
+# 今天 `crates/*/src` 对这三个常量零引用,故不阻塞;但其中 `ENTITY_OCCUPANCY_PLACEHOLDER`
+# (格子被实体占据)恰是碰撞判定最可能需要认的哨兵——真要用它时,**先扩本豁免并同步改这段注释**,
+# 不要绕过守卫。另见:物理实现今天也只认 air 一个哨兵,其余三个会落到
+# `unknown_material_class`,那是先于本守卫存在的设计缺口,待单独裁决。
 #
 # ## 这道门自己会不会空转
 #
@@ -100,10 +108,14 @@ IDENTITY_PATTERNS=(
 # `_` 是词字符,所以 `\bWATER\b` 匹配不到 `WATER_ID` —— 恰恰就是 invalidCase 的那个形状。
 # 改用「前后不是字母」自己划边界:
 #   VOCABULARY_PATTERNS_ANYCASE(大小写不敏感)罩 snake_case 与 SCREAMING_CASE:
-#     WATER_ID / is_water / magma_is_passable。后置 `[^A-Za-z]|$` 顺带排掉 watermark 这类
-#     正当英文词(high/low watermark 在队列代码里是术语)。
+#     WATER_ID / is_water / magma_is_passable。后置 `[^A-Za-z]|$` 排掉**连写**的 watermark。
 #   VOCABULARY_PATTERNS_CASED(大小写敏感)罩 CamelCase 拼接:WaterBlock / LavaFlow;
 #     后置要求大写或数字或 `_`,所以同样不碰 Watermark。
+#
+# **已知误伤:`high_water_mark` 会被判红。** `_` 不是字母,划不进边界,而 snake_case 恰是 Rust
+# 里 watermark 的惯用拼法;扫描面内就有 query/budget.rs。真遇到时改用 `peak` / `high_mark`
+# 之类不含 `water` 的命名,不要为它放宽判据——放宽会同时放掉 `water_id` 这类真违例。
+# 同理,注释与文档注释里的散文用词(「the bedrock invariant」「Ladder-shaped tree」)也会红。
 VOCABULARY_PATTERNS_ANYCASE=(
   '(^|[^A-Za-z])(water|lava|magma|obsidian|bedrock|cobweb|slime|ladder|gravel)([^A-Za-z]|$)'
 )
