@@ -1,7 +1,7 @@
 # 0010 · generated-clean 守卫保留自己的 SHA-256，不复用被审计树内的实现
 
 - 日期:2026-08-29
-- 状态:生效
+- 状态:被 [0014](0014-exit-legacy-baseline-contract-regime.md) 取代
 
 ## 背景
 

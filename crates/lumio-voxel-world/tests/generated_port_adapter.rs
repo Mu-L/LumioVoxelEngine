@@ -679,7 +679,7 @@ fn no_ffi_runtime_persistence_crate_and_adapter_has_no_pinvoke() {
     let end = slice.find(']').unwrap();
     let members = &slice[start..=end];
     let count = members.matches("lumio-voxel-").count();
-    assert_eq!(count, 7, "workspace_members={members}");
+    assert_eq!(count, 6, "workspace_members={members}");
     assert!(!members.contains("ffi"));
     assert!(!members.contains("runtime"));
     assert!(!members.contains("persistence"));

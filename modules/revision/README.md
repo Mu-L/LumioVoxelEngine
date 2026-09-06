@@ -1,7 +1,7 @@
 # revision 模块
 
 > World/Section Revision、读取一致性、比较、Snapshot Pin/COW 与 Revision 冲突语义。
-> 物理 crate：`lumio-voxel-domain`（[0006](../../.spec/decisions/0006-crate-map.md) / [0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)）；L2 ReadView 在本 crate，不进入 `lumio-voxel-ops`。
+> 物理 crate：`lumio-voxel-domain`（[0006](../../.spec/decisions/0006-crate-map.md)）；L2 ReadView 在本 crate，不进入 `lumio-voxel-ops`。
 
 ## 模块定位与目标
 
@@ -36,11 +36,11 @@
 
 - **输入**：World/Section 创建与销毁通知、读取范围、Expected Revision、Mutation 提交摘要、Snapshot Cut 请求。
 - **输出**：读取 `RevisionStamp`、Revision 比较结果、Pin/COW 句柄、提交后的新版本和稳定冲突原因。
-- **本仓 Port 表面**（Stamp 形状见架构源 `voxel-revision-stamp`）：`current_world() -> WorldRevision`；`current_section(section_id) -> SectionRevision`；`observe(scope) -> RevisionStamp`；`check(expected, observed) -> Ok | RevisionConflict`；`pin(cut) -> SnapshotPin | StableError`；`release(pin)`；`advance(changes) -> RevisionDelta`。
+- **本仓 Port 表面**：`current_world() -> WorldRevision`；`current_section(section_id) -> SectionRevision`；`observe(scope) -> RevisionStamp`；`check(expected, observed) -> Ok | RevisionConflict`；`pin(cut) -> SnapshotPin | StableError`；`release(pin)`；`advance(changes) -> RevisionDelta`。
 
 ## 依赖（编译 / 控制流 / 事件与数据）
 
-- **编译依赖**：`LumioNativeCore` 的固定宽度 ID、Handle 和稳定错误模型；架构源 Revision 基础类型。不依赖 `section` 或其他上层 Voxel 模块。
+- **编译依赖**：`LumioNativeCore` 的固定宽度 ID、Handle 和稳定错误模型；活契约的 Revision 常量。不依赖 `section` 或其他上层 Voxel 模块。
 - **被谁调用**：`world` 提供 Context 生命周期；`mutation` 在 CommitBatch 中请求 publish；`query`/`snapshot`/`spatial`/`mesh-collision` 读取 Stamp 或请求 Pin。
 - **发布/消费**：发布 RevisionDelta / Stamp；消费 Mutation 已验证的变化摘要。不调用 `section`。
 
@@ -91,7 +91,7 @@ Requested/Pinned -> Expired | Invalidated
 
 ## 配置、Capability 与安全约束
 
-- Revision 宽度、持久化表示和 Schema Epoch 由架构源契约决定，模块不得自行缩窄或复用其他域字段。
+- Revision 宽度与持久化表示由活契约决定，模块不得自行缩窄或复用其他域字段。
 - Pin/COW 内存预算来自不可变配置快照；超限必须返回稳定原因并计数。
 - 令牌只在所属 World/Context 有效；不得把它当作权限凭据或跨 World 授权。
 - LocalEmbedded 的两份 World 各自维护 Revision；任何共享计数器都视为边界违规。
@@ -110,13 +110,7 @@ Requested/Pinned -> Expired | Invalidated
 
 ## 对应 ADR、Schema 与 Fixture
 
-- 本仓 [0001](../../.spec/decisions/0001-snapshotcut-vs-capture-ref.md)、[0002](../../.spec/decisions/0002-barrier-commit-batch.md)、[0004](../../.spec/decisions/0004-snapshot-short-barrier-vs-quiesce.md)、[0006](../../.spec/decisions/0006-crate-map.md)、[0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)。
-- 架构源 `docs/adr/ADR-003-cross-world-txn.md`：Expected Revision、SnapshotCut、幂等和恢复语义。
-- 架构源 `schemas/common.schema.json` / `schemas/session-revision-vector.schema.json`：`revision` 与 `chunkRevisionSet`（Runtime 拥有的跨域向量，字段名是死基线冻结拼写，不随本仓 Section 改名；本仓自己的 stamp 用 `section_revision_set`）；正例 `fixtures/valid/session-revision-vector.json`，反例 `fixtures/invalid/session-revision-negative.json`。
-- 架构源 `schemas/snapshot-header.schema.json`：Snapshot 版本关联；正例 `fixtures/valid/snapshot-active.json`。
-- 架构源 `schemas/voxel-revision-stamp.schema.json`：WorldRevision 与 SectionRevisionSet；ADR-024。Pin/COW 策略仍属 VOX-D-005。
-
-## 尚未批准的决策门
-
-- **VOX-D-005**（Snapshot Pin/COW 与子 Section Diff 粒度）：载荷线格式已交付；物化策略待 Bench（架构源 D-014）。
-- Revision 数值宽度、溢出处理和分布式/跨 World 扩展属于公共契约问题，必须先在架构源新增 ADR/Schema，不能在本模块单独决定。
+- 本仓 [0001](../../.spec/decisions/0001-snapshotcut-vs-capture-ref.md)、[0002](../../.spec/decisions/0002-barrier-commit-batch.md)、[0004](../../.spec/decisions/0004-snapshot-short-barrier-vs-quiesce.md)、[0006](../../.spec/decisions/0006-crate-map.md)。
+- 活契约 `lumio.voxel-world.v1`（本仓副本 `crates/lumio-voxel-contracts/wire/voxel-world-v1.json`）：`sectionRevision` 单调性、`expectedSectionRevision` 前置条件与 `diffDispatch` 的 base 匹配。一致性由 `cargo test -p lumio-voxel-contracts --test voxel_world_conformance` 逐条断言。
+- 跨域 `SnapshotCut` 与 `SessionRevisionVector` 归 Runtime，本模块只接收不可变描述；本仓的 stamp 用 `section_revision_set`。
+- Revision 数值宽度、溢出处理和跨 World 扩展属于公共语义，必须先在架构仓改活契约，不能在本模块单独决定。

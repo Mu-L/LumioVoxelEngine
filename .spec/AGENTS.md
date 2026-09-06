@@ -9,8 +9,8 @@
 
 `LumioVoxelEngine` 是可复用的 Rust VoxelWorld 领域实现，拥有 Section 数据域、Revision、Mutation、Snapshot、Streaming 与空间数据源。
 
-- 当前架构基线是 `LGE-V1.4-2026-08-27`；公共架构与契约的唯一来源是 `LumioGameEngineArchitecture`，本仓只保存只读镜像 [`docs/architecture/LumioGameEngine_Architecture_v1.4.md`](../docs/architecture/LumioGameEngine_Architecture_v1.4.md)。
-- 实现边界见仓内 [0001](decisions/0001-snapshotcut-vs-capture-ref.md)–[0007](decisions/0007-v1.4-implementation-baseline.md) 与 [`docs/plans/lve-v1.4-implementation-blueprint.md`](../docs/plans/lve-v1.4-implementation-blueprint.md)。
+- 体素公共语义的唯一真值是架构仓的活契约 `engine/wire/voxel-world-v1.json`（`contractId: lumio.voxel-world.v1`）；本仓在 `crates/lumio-voxel-contracts/wire/` 保存逐字节副本，用一致性测试证明未漂移，不另写第二份。
+- 实现边界见仓内 [decisions/](decisions/README.md)（crate 地图 [0006](decisions/0006-crate-map.md)、契约来源 [0013](decisions/0013-voxel-world-contract-and-section-rename.md)）与 [`modules/README.md`](../modules/README.md)。
 - Server 权威世界、Client Replica 世界与 LocalEmbedded 双实例必须保持独立；C# Runtime 只能经版本化 `IVoxelWorldPort` 和生成契约访问。
 - 开工前先读 [`repository-architecture.md`](knowledge/standards/repository-architecture.md)；详细模块边界见根 [`README.md`](../README.md)。
 
@@ -25,11 +25,11 @@
 > **agents/ 准入门槛:只收「隔离本身即是产出价值」的角色**(当前仅 `reviewer`)。编码 / 拆解不设角色,规程见「编码约定」与 `task-breakdown`。
 
 - **调度取向:快 > 稳 > 好。** 默认并行:文件集互不重叠即并行扇出;能继承上下文的 fork 优先于冷启动 worker;串行只留给有依赖或文件重叠的工作。
-- **默认流程:** 创造性工作(新功能 / 建组件 / 改行为)→ `brainstorming` 出设计共识 → `writing-plans` 出实现计划(设计落 `docs/specs/`、计划落 `docs/plans/`,均为功能级工作产物;跨宿主任务状态真值仍是 `.spec/tasks/`,计划内 checkbox 只是执行内部进度)→ `subagent-driven-development` 逐任务执行(每任务两级审查:spec 合规 + 代码质量;无子代理宿主按其 Inline Fallback 降级);修 bug / 排障先 `systematic-debugging` 找根因再动手;多张独立卡并行扇出仍走 `task-breakdown` + wave(见「并行边界与合入」)。交付 → 收口门槛机器验证 + `verification-before-completion`(证据先于声称);整体收口审查按「派活模板」触发 `reviewer`(默认快审、显式要求才深审),退回按 `receiving-code-review` 处理。分级见 [`agents/reviewer.agent.md`](agents/reviewer.agent.md)。
+- **默认流程:** 创造性工作(新功能 / 建组件 / 改行为)→ `brainstorming` 出设计共识 → `writing-plans` 出实现计划(设计落 `.spec/knowledge/features/`、计划落 `.spec/plans/`,均为功能级工作产物;跨宿主任务状态真值仍是 `.spec/tasks/`,计划内 checkbox 只是执行内部进度)→ `subagent-driven-development` 逐任务执行(每任务两级审查:spec 合规 + 代码质量;无子代理宿主按其 Inline Fallback 降级);修 bug / 排障先 `systematic-debugging` 找根因再动手;多张独立卡并行扇出仍走 `task-breakdown` + wave(见「并行边界与合入」)。交付 → 收口门槛机器验证 + `verification-before-completion`(证据先于声称);整体收口审查按「派活模板」触发 `reviewer`(默认快审、显式要求才深审),退回按 `receiving-code-review` 处理。分级见 [`agents/reviewer.agent.md`](agents/reviewer.agent.md)。
 - **快速模式(收口白名单,默认优先尝试):** 纯文档 / 纯注释 / 纯配置数据 / 机械套用既有模式 / revert / 生成物随源更新 / 有效 diff < 20 行(去空行注释)——lint + 测试直接收口,交付附一行豁免声明,不派任何 agent。判定须机器可判(文件类型 + diff 行数),拿不准 = 快审。**红线面永不快速**:触碰 `rules/`、鉴权、安全面、可执行配置(如 hooks)的改动至少快审。
 - **审查闭环:** 交付即待审;completed 由主 loop 在 reviewer 通过(或按豁免跳过)后标记;高风险改动审查通过前**不得提交**。
 - **派 worker 三选一:** ① 多个互不依赖任务可并行 ② 改动大到撑爆编排上下文 ③ 需要隔离的干净实现环境。
-- **收口门槛:** `node .spec/tools/spec-lint.mjs && node --test .spec/tools/spec-lint.test.mjs`；涉及仓库边界或架构镜像时还必须复现 `.github/workflows/repository-policy.yml` 的检查，公共契约变更必须在 `LumioGameEngineArchitecture` 通过 `python3 tools/lumio_contract.py validate`；交付前必须通过。
+- **收口门槛:** `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo check --workspace --no-default-features`、`cargo test --workspace --all-features`、`cargo run -p lumio-voxel-test-support --example check-crate-dag`、`node .spec/tools/spec-lint.mjs && node --test .spec/tools/spec-lint.test.mjs`；全部 exit 0 才算交付。上游比对需要 `LUMIO_ENGINE_WIRE_DIR` 指向架构仓 `engine/wire`。公共语义变更先在架构仓改活契约，再同步本仓副本。
 - **并行边界与合入:** 任务文件集**互不重叠**才可并行(最小化冲突),重叠必串行;拆解产物按 wave 分批扇出,批间串行。并行 worker 各在独立 git worktree 实现(Claude Code 用 Agent 工具的 worktree 隔离),reviewer 审 worktree 相对基线的完整 diff,通过后主 loop 合入主工作区,未过审不合入,冲突退回实现方。多宿主并存时共享任务真值是 `.spec/tasks/`,宿主内置任务工具只作个人草稿。
 - **派活模板:** worker 派遣与 reviewer 触发的 prompt 骨架见 [`knowledge/standards/dispatch.md`](knowledge/standards/dispatch.md)。
 - **交回物格式(全仓单一权威):** ① 改动清单;② **验证证据**——命令与关键输出,不得只声称「已通过」;③ known gaps;④ 知识沉淀落点(或声明无需沉淀)。拆解类交任务卡集合,②以自检结论 + 待澄清项代替;reviewer 交审查报告(见 [`agents/reviewer.agent.md`](agents/reviewer.agent.md))。

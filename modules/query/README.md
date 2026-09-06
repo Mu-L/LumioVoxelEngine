@@ -1,7 +1,7 @@
 # query 模块
 
 > 有界只读批量查询、缺 Section 结果、读取 Revision、预算、超时与取消。
-> 物理 crate：`lumio-voxel-ops`（[0006](../../.spec/decisions/0006-crate-map.md) / [0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)）；经 domain `ReadView` 读取。
+> 物理 crate：`lumio-voxel-ops`（[0006](../../.spec/decisions/0006-crate-map.md)）；经 domain `ReadView` 读取。
 
 ## 模块定位与目标
 
@@ -12,18 +12,18 @@
 - 校验 Query 范围、点数、批次大小、Context/Generation 和调用能力。
 - 在指定 Revision 或请求开始时固定的 Latest 可读视图上执行点查询、范围查询和批量候选读取。目标 Revision 在 `begin` 时绑定，后续批次与 continuation 不得改观察版本。
 - 对每个结果返回读取 `WorldRevision/SectionRevision` 或明确的一致性令牌；多 Section 批次属于同一个已绑定 Revision。
-- 区分 `Ready`、`Unchanged`、`Pending`、`Unavailable`、`OutOfBudget`、`Cancelled` 和 `TimedOut` 等结果类别；缺 Section 四态的名字以活契约 `lumio.voxel-world.v1` 的 `diffDispatch.presence` 为准（[0013](../../.spec/decisions/0013-voxel-world-contract-and-section-rename.md)），其余结果类别仍以架构源 `voxel-query` / ADR-024（`LGE-V1.4-2026-08-27`）为准。
+- 区分 `Ready`、`Unchanged`、`Pending`、`Unavailable`、`OutOfBudget`、`Cancelled` 和 `TimedOut` 等结果类别；缺 Section 四态的名字以活契约 `lumio.voxel-world.v1` 的 `diffDispatch.presence` 为准（[0013](../../.spec/decisions/0013-voxel-world-contract-and-section-rename.md)），其余结果类别是本仓 Port 语义，改动记本仓 ADR。
 - 维护每请求的预算、截止时间、取消令牌、批次计数和诊断上下文。
 - 为 Spatial/Geometry 投影提供只读稳定 ReadView，不替上层做权限、AOI 或 Gameplay 过滤。
 
 ## 明确不负责什么
 
-- 不加载或驱逐 Section（归 [streaming](../streaming/README.md)），不修改 Block（归 [mutation](../mutation/README.md)）。
+- 不加载或驱逐 Section（驻留归 [world](../world/README.md)），不修改 Block（归 [mutation](../mutation/README.md)）。
 - 不拥有 World/Section 生命周期或 Revision 递增（归 [world](../world/README.md)、[revision](../revision/README.md)）。
 - 不把缺 Section 当作空值，不隐式等待无限时间，也不分配无界结果集合。
 - 不做玩家权限、阵营、隐身、带宽或最终 AOI 判断；上层根据候选结果做最终过滤。
 - 不泄漏 Storage 指针、锁、页地址或第三方容器。
-- 不依赖 [spatial](../spatial/README.md) 或 [mesh-collision](../mesh-collision/README.md)。
+- 不做最终 AOI、权限、渲染或 Gameplay 裁决；只返回带 Revision 与 `presence` 的读取结果。
 
 ## 拥有的状态与资源
 
@@ -35,13 +35,13 @@
 
 - **输入**：`QueryRequest`（范围/点集、目标 Revision、最大结果、预算、deadline、cancel token）、来自 `world` 的只读 Context。
 - **输出**：`QueryBatch`（typed voxel result + `RevisionStamp` + Section 状态）、稳定错误/取消原因和 Metrics。
-- **本仓 Port 表面**（一致性与缺 Section 四态见架构源 `voxel-query`）：`begin(request) -> QueryHandle | StableError`；`poll(handle, budget) -> QueryBatch | Pending | Done`；`cancel(handle, reason)`；`read_at(context, coord) -> VoxelRead | QueryStatus`。
+- **本仓 Port 表面**（缺 Section 四态见活契约 `diffDispatch.presence`）：`begin(request) -> QueryHandle | StableError`；`poll(handle, budget) -> QueryBatch | Pending | Done`；`cancel(handle, reason)`；`read_at(context, coord) -> VoxelRead | QueryStatus`。
 
 ## 依赖（编译 / 控制流 / 事件与数据）
 
 - **编译依赖**：[section](../section/README.md)（ReadView）、[revision](../revision/README.md)（Stamp/Pin）、NativeCore 稳定错误。不依赖 spatial、mesh-collision、streaming 或 world。
-- **被谁调用**：[world](../world/README.md) Port；[spatial](../spatial/README.md) 与 [mesh-collision](../mesh-collision/README.md) 经 ReadView 读取。
-- **发布/消费**：消费 [streaming](../streaming/README.md) 的 `AvailabilityChanged`；不直接发 Load。Pending 恢复必须继续绑定 `begin` 时的目标 Revision；目标已被回收则返回稳定 stale/unavailable，不得改读最新。
+- **被谁调用**：[world](../world/README.md) Port；物理检测与批量读投影经 ReadView 读取。
+- **发布/消费**：消费 [world](../world/README.md) 驻留发布的 `AvailabilityChanged`；不直接发 Load。Pending 恢复必须继续绑定 `begin` 时的目标 Revision；目标已被回收则返回稳定 stale/unavailable，不得改读最新。
 
 ## 生命周期与状态机
 
@@ -100,11 +100,6 @@ Running -> Failed
 
 ## 对应 ADR、Schema 与 Fixture
 
-- 本仓 [0006](../../.spec/decisions/0006-crate-map.md)、[0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)。
-- 架构源 `docs/adr/ADR-003-cross-world-txn.md`：读取 Revision 与 Section 可用性前置条件。
-- 架构源 `schemas/common.schema.json` / `schemas/session-revision-vector.schema.json`：Revision 结构。
-- 架构源 `schemas/voxel-query.schema.json`：一致性模式、continuation 绑定、缺 Section 多态；ADR-024。批次/预算默认值仍属 VOX-D-003。
-
-## 尚未批准的决策门
-
-- **VOX-D-003**（Query 批次、预算默认值）：一致性与缺 Section 四态已冻结；容量与超时默认值待 Bench。
+- 本仓 [0006](../../.spec/decisions/0006-crate-map.md)。
+- 活契约 `lumio.voxel-world.v1`（本仓副本 `crates/lumio-voxel-contracts/wire/voxel-world-v1.json`）：`diffDispatch.presence` 四态、`limits` 的批量上限、`errorCodes` 的拒绝命名。一致性由 `cargo test -p lumio-voxel-contracts --test voxel_world_conformance` 逐条断言。
+- 批次与预算的默认数值是本仓实现细节，按实测调整并记本仓 ADR；契约只冻结上限与拒绝语义。

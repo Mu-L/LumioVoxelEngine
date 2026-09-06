@@ -1,7 +1,7 @@
 # snapshot 模块
 
 > VoxelCaptureRef、Voxel Snapshot/Diff、Canonical 编码/解码、校验和恢复输入。
-> 物理 crate：`lumio-voxel-ops`（[0006](../../.spec/decisions/0006-crate-map.md) / [0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)）；P0。载荷契约随 ADR-035 / `LGE-V1.4-2026-08-27` 冻结。
+> 物理 crate：`lumio-voxel-ops`（[0006](../../.spec/decisions/0006-crate-map.md)）；P0。载荷语义以活契约 `lumio.voxel-world.v1` 为准。
 
 ## 模块定位与目标
 
@@ -20,9 +20,9 @@
 ## 明确不负责什么
 
 - 不负责临时文件、fsync、原子替换、Checkpoint 保留或 WAL/TxnJournal 落盘（归 Host/Runtime 持久化编排）。
-- 不定义或拥有公共 `SnapshotCut` / SnapshotHeader 字段和 Schema 版本（Cut 归 Runtime；Header 归架构源）；不手写第二套 Serializer。
+- 不定义或拥有公共 `SnapshotCut` 与 Snapshot 信封字段（Cut 归 Runtime；信封归活契约）；不手写第二套 Serializer。
 - 不拥有 Pin/COW 记录（归 [revision](../revision/README.md)），只借用 Pin 句柄。
-- 不执行 Migration DAG 或覆盖旧 Snapshot（归 Host；节点转换见 [migration](../migration/README.md)）。
+- 不执行转档 DAG 或覆盖旧 Snapshot（归 Host）。
 - 不暂停 Tick、不拥有 World 生命周期或 CrossWorld Coordinator。
 - 不把完整 Snapshot 自动复制到 C# Runtime 作为第二权威状态。
 - 不直接清除 Dirty；Host 耐久回执经 `world` 转交 `section`。
@@ -38,13 +38,13 @@
 
 - **输入**：Barrier 产出的不可变 `SnapshotCut`、Pin 后的只读页视图、目标 Schema/Compression、恢复或 Diff 请求。
 - **输出**：`VoxelCaptureRef`、`SnapshotPayload`（Canonical bytes + Header 元数据）、`DiffPayload`、Decode 后的 typed 恢复输入、稳定校验错误。
-- **本仓 Port 表面**（载荷见架构源 `voxel-snapshot-payload`，ADR-035 随 `LGE-V1.4-2026-08-27` 冻结）：`capture(cut) -> VoxelCaptureRef | StableError`；`diff(base, target) -> DiffPayload`；`encode(ref) -> CanonicalBytes`；`decode(header, bytes) -> TypedSnapshot | StableError`；`release(ref)`。
+- **本仓 Port 表面**（载荷编码见活契约 `sectionPayload`）：`capture(cut) -> VoxelCaptureRef | StableError`；`diff(base, target) -> DiffPayload`；`encode(ref) -> CanonicalBytes`；`decode(header, bytes) -> TypedSnapshot | StableError`；`release(ref)`。
 
 ## 依赖（编译 / 控制流 / 事件与数据）
 
-- **编译依赖**：[revision](../revision/README.md)（Pin API）、[section](../section/README.md)（稳定页视图）、NativeCore Buffer/Compression、架构源生成的 Canonical Serializer。不依赖 `world`。
+- **编译依赖**：[revision](../revision/README.md)（Pin API）、[section](../section/README.md)（稳定页视图）、NativeCore Buffer/Compression、本仓自持的 canonical 编码（[0011](../../.spec/decisions/0011-voxel-local-canonical-object-encoding.md)）。不依赖 `world`。
 - **被谁调用**：[world](../world/README.md) 在 Barrier 上发起 capture/decode；Host persistence 取走 Canonical bytes。
-- **发布/消费**：消费 Runtime `SnapshotCut` 与 `mutation` 发布的 `SectionChanged`（Diff 索引）；向 Host 发布 CaptureReady；向 [migration](../migration/README.md) 只提供不可变 Artifact，不反向调用 migration。
+- **发布/消费**：消费 Runtime `SnapshotCut` 与 `mutation` 发布的 `SectionChanged`（Diff 索引）；向 Host 发布 CaptureReady；对转档工具只提供不可变 Artifact，不反向调用它。
 
 ## 生命周期与状态机
 
@@ -56,7 +56,7 @@ Pinned/Encoding -> Cancelled | Failed
 Ready -> Released
 ```
 
-持久化激活状态遵循架构源 `SnapshotHeader`：`Staged -> Active`，校验失败为 `Invalid`；激活动作不由本模块直接执行。
+持久化激活状态是 `Staged -> Active`，校验失败为 `Invalid`；激活动作不由本模块直接执行。
 
 - `Cutting` 只能在协调 Barrier 接收 Runtime 已固定的 Cut 并取得 CaptureRef；异步编码使用同一 Pin/COW，期间权威写入可继续。
 - `Verified` 只表示字节和 Header 校验通过，不表示已经 fsync 或成为 Active Checkpoint。
@@ -105,13 +105,7 @@ Ready -> Released
 
 ## 对应 ADR、Schema 与 Fixture
 
-- 本仓 [0001](../../.spec/decisions/0001-snapshotcut-vs-capture-ref.md)、[0004](../../.spec/decisions/0004-snapshot-short-barrier-vs-quiesce.md)、[0006](../../.spec/decisions/0006-crate-map.md)、[0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)。
-- 架构源 `docs/adr/ADR-003-cross-world-txn.md`：SnapshotCut 与 Revision 一致性。
-- 架构源 `docs/adr/ADR-010-persistence-config.md`：Canonical Serializer、校验和配置快照。
-- 架构源 `schemas/snapshot-header.schema.json`：正例 `fixtures/valid/snapshot-active.json`；反例 `fixtures/invalid/snapshot-length-mismatch.json`。
-- 架构源 `schemas/voxel-snapshot-payload.schema.json`：Capture/Payload/Diff；ADR-035，随 `LGE-V1.4-2026-08-27` 冻结。Envelope 仍是 `snapshot-header`。 Pin/COW 物化策略仍属 VOX-D-005。
-
-## 尚未批准的决策门
-
-- **VOX-D-005**（Pin/COW 与子 Section Diff 粒度）：载荷线格式已交付；物化策略待 Bench（架构源 D-014）。
-- **D-005**（整体 Snapshot/WAL 耐久级别）由架构源/Host 决定，本模块只提供等价 Canonical bytes。
+- 本仓 [0001](../../.spec/decisions/0001-snapshotcut-vs-capture-ref.md)、[0004](../../.spec/decisions/0004-snapshot-short-barrier-vs-quiesce.md)、[0006](../../.spec/decisions/0006-crate-map.md)。
+- 本仓 [0011](../../.spec/decisions/0011-voxel-local-canonical-object-encoding.md)、[0012](../../.spec/decisions/0012-canonical-decode-cost-and-refusal-naming.md)：canonical 编码与解码收费/拒绝命名。
+- 活契约 `lumio.voxel-world.v1`（本仓副本 `crates/lumio-voxel-contracts/wire/voxel-world-v1.json`）：`sectionPayload` 四档编码与载荷信封、`errorCodes`。一致性由 `cargo test -p lumio-voxel-contracts --test voxel_world_conformance` 逐条断言。
+- Pin/COW 的物化策略与整体 Snapshot/WAL 耐久级别归 Host/Runtime 决定，本模块只提供等价 Canonical bytes。

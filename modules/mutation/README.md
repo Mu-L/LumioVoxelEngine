@@ -1,7 +1,7 @@
 # mutation 模块
 
 > 单域 Mutation、Prepare/Reservation、幂等 Commit/Abort、Expected Revision 冲突与恢复摘要。
-> 物理 crate：`lumio-voxel-ops`（[0006](../../.spec/decisions/0006-crate-map.md) / [0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)）；L2 WriteSet/CommitBatch 在 `lumio-voxel-domain`。
+> 物理 crate：`lumio-voxel-ops`（[0006](../../.spec/decisions/0006-crate-map.md)）；L2 WriteSet/CommitBatch 在 `lumio-voxel-domain`。
 
 ## 模块定位与目标
 
@@ -21,14 +21,14 @@
 - 不拥有 CrossWorld 协调、全局 `CommitIntent`、Game/ECS CommandBuffer 或 TxnJournal 的最终持久化（归 Runtime/Host）。
 - 不做玩家权限、阵营、隐身、库存、扣费、Ability 或其他 Gameplay 判断；只接受上层已完成的结构前置条件上下文。
 - 不直接加载 Section、不绕过 [query](../query/README.md) 的只读边界、不持有跨模块 Storage 锁。
-- 不调用 [snapshot](../snapshot/README.md) 或 [streaming](../streaming/README.md)；只读 Availability Port，并发布 `SectionChanged`。
+- 不调用 [snapshot](../snapshot/README.md)，也不调度驻留；只读 Availability Port，并发布 `SectionChanged`。
 - 不在 Native 锁内回调 C#，不由 Worker 线程直接触发 Hot Gameplay。
 - 不允许无 Expected Revision 的静默覆盖写入。
 
 ## 拥有的状态与资源
 
 - 活跃 Reservation、租约截止和已锁定 Section/Cell 范围。
-- `TxnId -> ParticipantReceipt` 的有界幂等缓存（与 CommitBatch 共同耐久，见架构源 ADR-025；表容量属 VOX-D-004）。
+- `TxnId -> ParticipantReceipt` 的有界幂等缓存（与 CommitBatch 共同耐久）；表容量与租约上限是本仓实现细节，按实测调整。
 - Prepare 失败原因、Abort 原因、变更摘要和待提交 RevisionDelta。
 - Barrier 内的临时 WriteSet / CommitBatch；不长期持有 Section 可变引用。
 
@@ -36,7 +36,7 @@
 
 - **输入**：Mutation Batch（坐标/新值/Expected Revision/TxnId/Deadline）、World Context、上层已验证的结构上下文。
 - **输出**：Prepare Token、Reservation 状态、Commit/Abort 结果、变更范围和新 Revision。
-- **本仓 Port 表面**（receipt/`status` 形态见架构源 `voxel-mutation-receipt`）：`prepare(batch) -> PreparedVoxelToken | MutationError`；`commit(txn_id, token) -> CommitResult | StableError`；`abort(txn_id, token, reason)`；`status(txn_id) -> MutationStatus`。
+- **本仓 Port 表面**：`prepare(batch) -> PreparedVoxelToken | MutationError`；`commit(txn_id, token) -> CommitResult | StableError`；`abort(txn_id, token, reason)`；`status(txn_id) -> MutationStatus`。
 
 ## 依赖（编译 / 控制流 / 事件与数据）
 
@@ -82,9 +82,9 @@ Prepared -> Indeterminate
 ## 正常数据流与失败路径
 
 - **Prepare**：批次规范化 → Section/Cell/Revision/容量检查 → 建立 Reservation → 返回 Token。
-- **Commit**：确认 Coordinator 已持久化 `CommitIntent`（CrossWorld）或单域调用方已批准 → CommitBatch 在同一原子批内发布页、Revision 并记录 participant receipt（架构源 ADR-025：`CoDurableWithWorldState`）→ 发布 `SectionChanged` → 返回结果。
+- **Commit**：确认 Coordinator 已持久化 `CommitIntent`（CrossWorld）或单域调用方已批准 → CommitBatch 在同一原子批内发布页、Revision 并记录 participant receipt（`CoDurableWithWorldState`：回执与世界状态同批耐久）→ 发布 `SectionChanged` → 返回结果。
 - **Abort**：释放 Reservation，不产生可见变更；重复 Abort 幂等。
-- **失败路径**：Revision 冲突、Section 未加载、Cell 不可写、容量超限、租约过期、取消、Context 失效均在可见写入前拒绝；Commit 后结果丢失通过 `status(txnId)` 查询。崩溃后 receipt 与写入一起从共同耐久批次恢复，遵循架构源 ADR-025（含 pruning handshake 与 `ResultPruned` 终态）。
+- **失败路径**：Revision 冲突、Section 未加载、Cell 不可写、容量超限、租约过期、取消、Context 失效均在可见写入前拒绝；Commit 后结果丢失通过 `status(txnId)` 查询。崩溃后 receipt 与写入一起从共同耐久批次恢复，含 pruning handshake 与 `ResultPruned` 终态。
 
 ## 错误分类、恢复与降级
 
@@ -114,11 +114,6 @@ Prepared -> Indeterminate
 
 ## 对应 ADR、Schema 与 Fixture
 
-- 本仓 [0002](../../.spec/decisions/0002-barrier-commit-batch.md)、[0006](../../.spec/decisions/0006-crate-map.md)、[0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)。
-- 架构源 `docs/adr/ADR-003-cross-world-txn.md`：Prepare/Reservation/CommitIntent、固定 Commit 顺序和 Indeterminate 恢复。
-- 架构源 `schemas/cross-world-txn.schema.json`：正例 `fixtures/valid/cross-world-txn-committed.json`、`fixtures/valid/cross-world-txn-aborted.json`；反例 `fixtures/invalid/cross-world-txn-partial-commit.json`。
-- 架构源 `schemas/voxel-mutation-receipt.schema.json`：participant receipt 与 `status(txnId)`；ADR-025（`CoDurableWithWorldState`）。
-
-## 尚未批准的决策门
-
-- **VOX-D-004**（Reservation 租约与 receipt 表容量）：崩溃恢复协议已冻结；租约和表上限待容量测试。
+- 本仓 [0002](../../.spec/decisions/0002-barrier-commit-batch.md)、[0006](../../.spec/decisions/0006-crate-map.md)。
+- 活契约 `lumio.voxel-world.v1`（本仓副本 `crates/lumio-voxel-contracts/wire/voxel-world-v1.json`）：写入条目的结构化字段、`expectedSectionRevision` 前置条件、回执形态与 `errorCodes`。一致性由 `cargo test -p lumio-voxel-contracts --test voxel_world_conformance` 逐条断言。
+- 跨域事务的协调状态与 `CommitIntent` 归 Runtime；本模块只是参与者，固定顺序 `VoxelCommit -> EcsCommandBufferCommit`。

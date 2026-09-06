@@ -6,7 +6,6 @@ members = [
     "crates/lumio-voxel-ops",
     "crates/lumio-voxel-world",
     "crates/lumio-voxel-project",
-    "crates/lumio-voxel-migration",
     "crates/lumio-voxel-test-support",
 ]
 

@@ -14,8 +14,7 @@ metadata:
 ## 背景 / 目标
 
 公共语义的唯一真值是架构仓 `engine/wire/voxel-world-v1.json`(`contractId: lumio.voxel-world.v1`)。
-本仓消费它,不另写一份;`generated/` 下那份 `LGE-V1.4-2026-08-27` 镜像的生成源仓已不存在,
-它用 `Chunk` 指代 16³ 数据单元,活代码不再从它取分层语义。
+本仓消费它,不另写一份;`wire/voxel-world-v1.json` 是逐字节副本,漂移由一致性测试拦住。
 
 ## 设计
 

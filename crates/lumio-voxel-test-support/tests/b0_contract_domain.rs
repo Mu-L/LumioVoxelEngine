@@ -9,10 +9,10 @@ use lumio_voxel_domain::revision::RevisionAllocator;
 use lumio_voxel_domain::section::SectionSlot;
 use lumio_voxel_test_support::b0_harness::{
     MATRIX_ROWS, case_artifact_hash_lock, case_deterministic_executor, case_dirty_frontier_pure,
-    case_dual_voxel_world, case_pin_reclaim, case_port_schema_intern, case_publication_old_or_new,
-    case_revision_monotonic, case_section_four_state, case_seven_crate_dag, run_b0_matrix,
+    case_dual_voxel_world, case_frozen_crate_dag, case_pin_reclaim, case_port_schema_intern,
+    case_publication_old_or_new, case_revision_monotonic, case_section_four_state, run_b0_matrix,
 };
-use lumio_voxel_test_support::crate_dag::{self, SEVEN_CRATES};
+use lumio_voxel_test_support::crate_dag::{self, FROZEN_CRATES};
 use lumio_voxel_test_support::deterministic_executor::{DeterministicExecutor, Schedule};
 use lumio_voxel_test_support::reference_harness::GeneratedVoxelOperation;
 
@@ -47,8 +47,8 @@ fn artifact_hashes_verify_ok() {
 }
 
 #[test]
-fn seven_crate_dag_legal_empty_forbidden_token() {
-    assert_eq!(SEVEN_CRATES.len(), 7);
+fn frozen_crate_dag_legal_empty_forbidden_token() {
+    assert_eq!(FROZEN_CRATES.len(), 6);
     let legal = crate_dag::parse_fixture_graph(include_str!(
         "../../../tools/architecture/fixtures/dag-legal.json"
     ));
@@ -62,7 +62,7 @@ fn seven_crate_dag_legal_empty_forbidden_token() {
         extra_v.iter().any(|s| s.contains("禁止的额外 crate 名")),
         "expected forbidden extra crate token, got {extra_v:?}"
     );
-    assert_case_ok(case_seven_crate_dag());
+    assert_case_ok(case_frozen_crate_dag());
 }
 
 #[test]

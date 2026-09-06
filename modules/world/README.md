@@ -1,7 +1,7 @@
 # world 模块
 
 > VoxelWorld 实例组装、Authority/Replica Role、Context/Handle 生命周期、Barrier 入口与模块协调。
-> 物理 crate：`lumio-voxel-world`（[0006](../../.spec/decisions/0006-crate-map.md) / [0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)）。
+> 物理 crate：`lumio-voxel-world`（[0006](../../.spec/decisions/0006-crate-map.md)）。
 
 ## 模块定位与目标
 
@@ -37,7 +37,7 @@
 
 - **输入**：Host 创建参数（Role/WorldId/Capability/预算）、Runtime Port 调用、Barrier Tick 入口、已固定的 `SnapshotCut`、Host `DurabilityAck`、Quiesce/Destroy 指令、restore 字节。
 - **输出**：不透明 `VoxelWorldHandle`、Ready/Running 状态、Port 结果、`VoxelCaptureRef`、稳定故障和诊断事件。
-- **本仓 Port 表面**（字段以架构源 `voxel-world-port` 为准，本文不复制布局）：`create_world(config) -> VoxelWorldHandle | StableError`；`query(handle, request)`；`prepare_mutation(handle, batch)`；`commit(handle, txn_id, token)`；`abort(handle, txn_id, token, reason)`；`capture(handle, cut) -> VoxelCaptureRef`；`apply_durability_ack(handle, ack)`；`restore(handle, decoded)`；`quiesce(handle, reason)`；`destroy(handle)`。
+- **本仓 Port 表面**（错误码以活契约 `errorCodes` 为准，本文不复制布局）：`create_world(config) -> VoxelWorldHandle | StableError`；`query(handle, request)`；`prepare_mutation(handle, batch)`；`commit(handle, txn_id, token)`；`abort(handle, txn_id, token, reason)`；`capture(handle, cut) -> VoxelCaptureRef`；`apply_durability_ack(handle, ack)`；`restore(handle, decoded)`；`quiesce(handle, reason)`；`destroy(handle)`。
 
 ## 依赖（编译 / 控制流 / 事件与数据）
 
@@ -47,7 +47,7 @@
 
 ## 生命周期与状态机
 
-公共 WorldSlot/Session 生命周期由架构源定义；本模块细化 VoxelWorld 实例状态：
+公共 WorldSlot/Session 生命周期由 Host/Runtime 定义；本模块细化 VoxelWorld 实例状态：
 
 ```text
 Created -> Initializing -> Ready -> Running <-> Quiescing
@@ -92,7 +92,7 @@ Created/Initializing/Ready/Running/Quiescing/... -> Faulted
 - Role、WorldId、Schema/ABI、资源预算和启用模块来自不可变配置/Manifest；运行期只在 Tick 边界切换快照。
 - Handle 使用 Index+Generation+Context 语义；不暴露指针、对象引用或内部地址。
 - Server、Client、LocalEmbedded 各自创建 World；Local 不得通过同进程捷径跳过序列化、权限、大小限制和有界队列。
-- 公共契约变化必须先在架构源新增 ADR/Schema/Fixture/Baseline，再更新本模块。
+- 公共语义变化必须先在架构仓改活契约，再同步本仓副本与本模块。
 
 ## 日志、Metrics、Trace 与 Audit
 
@@ -108,13 +108,6 @@ Created/Initializing/Ready/Running/Quiescing/... -> Faulted
 
 ## 对应 ADR、Schema 与 Fixture
 
-- 本仓 [0001](../../.spec/decisions/0001-snapshotcut-vs-capture-ref.md)、[0002](../../.spec/decisions/0002-barrier-commit-batch.md)、[0004](../../.spec/decisions/0004-snapshot-short-barrier-vs-quiesce.md)、[0006](../../.spec/decisions/0006-crate-map.md)、[0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)。
-- 架构源 `docs/adr/ADR-001-session-lifecycle.md`：World/Role/Host 所有权和销毁顺序。
-- 架构源 `docs/adr/ADR-002-tick-determinism.md`：Simulation Owner Thread 与 Barrier。
-- 架构源 `schemas/native-managed-abi.schema.json`：Root API/Handle/错误边界；正例 `fixtures/valid/native-managed-abi.json`。
-- 架构源 `schemas/host-capability.schema.json`：Role/Capability；正例 `fixtures/valid/host-capability.json`。
-- 架构源 `schemas/voxel-world-port.schema.json`：World Role/Context/生命周期与 Port 方法；ADR-024。
-
-## 尚未批准的决策门
-
-- 无独立数值决策门。World 的公共状态机、Handle 布局、ABI 和 Capability 变化必须回架构源；模块组合顺序可通过本仓 ADR 细化并同步模块地图。
+- 本仓 [0001](../../.spec/decisions/0001-snapshotcut-vs-capture-ref.md)、[0002](../../.spec/decisions/0002-barrier-commit-batch.md)、[0004](../../.spec/decisions/0004-snapshot-short-barrier-vs-quiesce.md)、[0006](../../.spec/decisions/0006-crate-map.md)。
+- 活契约 `lumio.voxel-world.v1`（本仓副本 `crates/lumio-voxel-contracts/wire/voxel-world-v1.json`）：`errorCodes`、`diffDispatch.presence`、`residency` 的脏页与回执覆盖。一致性由 `cargo test -p lumio-voxel-contracts --test voxel_world_conformance` 逐条断言。
+- World 的 Role/Context/生命周期与 Handle 布局是本仓 Port 语义；公共语义变化必须回架构仓改活契约，模块组合顺序用本仓 ADR 细化并同步模块地图。

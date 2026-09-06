@@ -15,15 +15,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lumio-voxel-migration"
-version = "0.0.0"
-dependencies = [
- "lumio-voxel-contracts",
- "lumio-voxel-domain",
- "lumio-voxel-ops",
-]
-
-[[package]]
 name = "lumio-voxel-ops"
 version = "0.0.0"
 dependencies = [

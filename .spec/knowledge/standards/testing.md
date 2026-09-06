@@ -44,23 +44,21 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check --workspace --no-default-features
 cargo test --workspace --all-features
-cargo check-crate-dag
-cargo check-generated-clean
+cargo run -p lumio-voxel-test-support --example check-crate-dag
 python tools/architecture/check_crate_dag.py
-python tools/architecture/check_generated_clean.py
 python tools/architecture/test_guards.py
 ```
 
-公共 Contract 变更还必须在 `LumioGameEngineArchitecture` 安装 `requirements-dev.txt` 后运行 `python3 tools/lumio_contract.py validate`。
+`cargo test --workspace --all-features` 做上游比对时，`LUMIO_ENGINE_WIRE_DIR` 指向架构仓 `engine/wire`；公共语义变更先在架构仓改活契约。
 
-工作区恰好七个 crate（ADR-0006）：`lumio-voxel-contracts`、`lumio-voxel-domain`、`lumio-voxel-ops`、`lumio-voxel-world`、`lumio-voxel-project`、`lumio-voxel-migration`、`lumio-voxel-test-support`。禁止 persistence / runtime / ffi / common crate。DAG 与 generated-clean 的实现入口是 `lumio_voxel_test_support::crate_dag::violations` 与 `lumio_voxel_test_support::generated_clean::violations`。
+工作区恰好六个 crate（[0006](../../decisions/0006-crate-map.md)）：`lumio-voxel-contracts`、`lumio-voxel-domain`、`lumio-voxel-ops`、`lumio-voxel-world`、`lumio-voxel-project`、`lumio-voxel-test-support`。禁止 persistence / runtime / ffi / common crate。DAG 的实现入口是 `lumio_voxel_test_support::crate_dag::violations`。
 
 ## 本仓 Headless / 契约测试面
 
 - Section/坐标/边界/Revision/Mutation/Reservation/幂等和冲突 Property/Golden Test；`SectionId`/`ChunkId` 键解析、派生与旧式三坐标 `c:x:y:z` 的显式拒绝。
-- Snapshot/Diff、Canonical Serialization、压缩、损坏、恢复和 Migration Fixture。
-- Load/Unload/Streaming 背压、取消、超时、缺 Section Query 和资源预算。
+- Snapshot/Diff、Canonical Serialization、压缩、损坏和恢复 Fixture。
+- Load/Unload 驻留背压、取消、超时、缺 Section Query 和资源预算。
 - Reference Voxel Port 与真实 Native 实现的 Differential Test。
-- Voxel Spatial/AOI/Collision Benchmark，记录 Section 密度、AOI 半径、队列、CPU 与内存。
-- Fault：Section Load Failure、Revision Conflict、Lost Result、Snapshot Corruption、Migration Failure、OOM、磁盘满。
-- 破坏性 Section/Revision 变化必须同时覆盖旧版本 Fixture、Migration 和失败恢复路径。
+- 物理检测与批量读 Benchmark，记录 Section 密度、范围、队列、CPU 与内存。
+- Fault：Section Load Failure、Revision Conflict、Lost Result、Snapshot Corruption、OOM、磁盘满。
+- 破坏性 Section/Revision 变化必须同时覆盖旧版本 Fixture、转档路径和失败恢复路径。

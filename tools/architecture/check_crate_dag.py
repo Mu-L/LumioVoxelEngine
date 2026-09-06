@@ -9,13 +9,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SEVEN = [
+FROZEN = [
     "lumio-voxel-contracts",
     "lumio-voxel-domain",
     "lumio-voxel-ops",
     "lumio-voxel-world",
     "lumio-voxel-project",
-    "lumio-voxel-migration",
     "lumio-voxel-test-support",
 ]
 ALLOWED = {
@@ -33,32 +32,26 @@ ALLOWED = {
         "lumio-voxel-ops",
         "lumio-voxel-project",
     },
-    "lumio-voxel-migration": {
-        "lumio-voxel-contracts",
-        "lumio-voxel-domain",
-        "lumio-voxel-ops",
-    },
     "lumio-voxel-test-support": {
         "lumio-voxel-contracts",
         "lumio-voxel-domain",
         "lumio-voxel-ops",
         "lumio-voxel-world",
         "lumio-voxel-project",
-        "lumio-voxel-migration",
     },
 }
 FORBIDDEN_TOKENS = ("persistence", "runtime", "ffi", "common")
 
 
 def violations(graph: dict[str, list[str]]) -> list[str]:
-    seven = set(SEVEN)
+    frozen = set(FROZEN)
     names = set(graph)
     out: list[str] = []
-    for extra in sorted(names - seven):
+    for extra in sorted(names - frozen):
         out.append(f"未登记的 workspace crate: {extra}")
         if any(tok in extra for tok in FORBIDDEN_TOKENS):
             out.append(f"禁止的额外 crate 名: {extra}")
-    for missing in sorted(seven - names):
+    for missing in sorted(frozen - names):
         out.append(f"缺少冻结 crate: {missing}")
     for krate, deps in graph.items():
         allow = ALLOWED.get(krate)
@@ -77,7 +70,7 @@ def violations(graph: dict[str, list[str]]) -> list[str]:
                 out.append(f"L0–L4/Tool 不得依赖 world: {krate} -> {dep}")
             if dep == "lumio-voxel-test-support" and krate != "lumio-voxel-test-support":
                 out.append(f"生产 crate 不得依赖 test-support: {krate} -> {dep}")
-            if dep in seven and dep not in allow:
+            if dep in frozen and dep not in allow:
                 out.append(f"禁止的依赖方向: {krate} -> {dep}")
     return sorted(set(out))
 

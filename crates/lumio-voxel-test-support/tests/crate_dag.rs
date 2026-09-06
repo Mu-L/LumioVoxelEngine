@@ -44,13 +44,13 @@ fn extra_persistence_crate_is_rejected() {
 }
 
 #[test]
-fn legal_seven_crate_graph_has_no_violations() {
+fn legal_frozen_crate_graph_has_no_violations() {
     let v = crate_dag::violations(&legal_graph());
     assert!(v.is_empty(), "legal fixture must pass, got {v:?}");
 }
 
 #[test]
-fn cargo_metadata_lists_exactly_seven_members() {
+fn cargo_metadata_lists_exactly_frozen_members() {
     let root = workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
     let out = Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--no-deps"])
@@ -71,8 +71,8 @@ fn cargo_metadata_lists_exactly_seven_members() {
     let end = slice.find(']').unwrap();
     let members = &slice[start..=end];
     let count = members.matches("lumio-voxel-").count();
-    assert_eq!(count, 7, "workspace_members={members}");
-    for name in crate_dag::SEVEN_CRATES {
+    assert_eq!(count, 6, "workspace_members={members}");
+    for name in crate_dag::FROZEN_CRATES {
         assert!(members.contains(name), "missing member {name} in {members}");
     }
     assert!(!members.contains("persistence"));

@@ -6,13 +6,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SEVEN_CRATES: [&str; 7] = [
+pub const FROZEN_CRATES: [&str; 6] = [
     "lumio-voxel-contracts",
     "lumio-voxel-domain",
     "lumio-voxel-ops",
     "lumio-voxel-world",
     "lumio-voxel-project",
-    "lumio-voxel-migration",
     "lumio-voxel-test-support",
 ];
 
@@ -47,14 +46,6 @@ fn allowed_deps() -> BTreeMap<&'static str, BTreeSet<&'static str>> {
             ]),
         ),
         (
-            "lumio-voxel-migration",
-            BTreeSet::from([
-                "lumio-voxel-contracts",
-                "lumio-voxel-domain",
-                "lumio-voxel-ops",
-            ]),
-        ),
-        (
             "lumio-voxel-test-support",
             BTreeSet::from([
                 "lumio-voxel-contracts",
@@ -62,7 +53,6 @@ fn allowed_deps() -> BTreeMap<&'static str, BTreeSet<&'static str>> {
                 "lumio-voxel-ops",
                 "lumio-voxel-world",
                 "lumio-voxel-project",
-                "lumio-voxel-migration",
             ]),
         ),
     ])
@@ -71,17 +61,17 @@ fn allowed_deps() -> BTreeMap<&'static str, BTreeSet<&'static str>> {
 /// Return human-readable violations for a workspace normal-dependency graph.
 pub fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
     let allowed = allowed_deps();
-    let seven: BTreeSet<&str> = SEVEN_CRATES.into_iter().collect();
+    let frozen: BTreeSet<&str> = FROZEN_CRATES.into_iter().collect();
     let mut out = Vec::new();
 
     let names: BTreeSet<&str> = graph.keys().map(String::as_str).collect();
-    for extra in names.difference(&seven) {
+    for extra in names.difference(&frozen) {
         out.push(format!("未登记的 workspace crate: {extra}"));
         if FORBIDDEN_EXTRA_TOKENS.iter().any(|tok| extra.contains(tok)) {
             out.push(format!("禁止的额外 crate 名: {extra}"));
         }
     }
-    for missing in seven.difference(&names) {
+    for missing in frozen.difference(&names) {
         out.push(format!("缺少冻结 crate: {missing}"));
     }
 
@@ -111,7 +101,7 @@ pub fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                     "生产 crate 不得依赖 test-support: {krate} -> {dep}"
                 ));
             }
-            if seven.contains(dep.as_str()) && !allow.contains(dep.as_str()) {
+            if frozen.contains(dep.as_str()) && !allow.contains(dep.as_str()) {
                 out.push(format!("禁止的依赖方向: {krate} -> {dep}"));
             }
         }
@@ -173,7 +163,7 @@ pub fn live_graph(
     workspace_root: &std::path::Path,
 ) -> Result<BTreeMap<String, Vec<String>>, String> {
     let mut graph = BTreeMap::new();
-    for krate in SEVEN_CRATES {
+    for krate in FROZEN_CRATES {
         graph.insert(krate.to_string(), direct_deps(workspace_root, krate)?);
     }
     Ok(graph)

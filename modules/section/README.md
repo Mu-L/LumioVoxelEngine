@@ -1,7 +1,7 @@
 # section 模块
 
 > Section 坐标、Block 数据、页布局、页编码、边界校验与 Section 驻留状态。
-> 物理 crate：`lumio-voxel-domain`（[0006](../../.spec/decisions/0006-crate-map.md) / [0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)）；与 `revision` sibling，不互调。
+> 物理 crate：`lumio-voxel-domain`（[0006](../../.spec/decisions/0006-crate-map.md)）；与 `revision` sibling，不互调。
 > 命名以活契约 `lumio.voxel-world.v1` 为准：16×16×16 = 4096 格的数据单元叫 **Section**，`Chunk` 是 16 个 Section 摞成的列容器、不携带数据、不持有独立 revision（[0013](../../.spec/decisions/0013-voxel-world-contract-and-section-rename.md)、[`features/voxel-section-chunk.md`](../../.spec/knowledge/features/voxel-section-chunk.md)）。
 
 ## 模块定位与目标
@@ -19,7 +19,7 @@
 
 ## 明确不负责什么
 
-- 不拥有 World 生命周期、全局 Revision、Load/Unload 调度或 IO Worker（分别归 [world](../world/README.md)、[revision](../revision/README.md)、[streaming](../streaming/README.md)）。
+- 不拥有 World 生命周期、全局 Revision、Load/Unload 调度或 IO Worker（前两者归 [world](../world/README.md) 与 [revision](../revision/README.md)，驻留调度当前收在 [world](../world/README.md)）。
 - 不执行权限、资源、Gameplay 规则或 CrossWorld 协调。
 - 不自行递增公共 `WorldRevision`/`SectionRevision`；只提供受控 WriteView，由 `mutation` 的 CommitBatch 在 Barrier 同时发布页与版本。
 - 不调用 `revision` 服务。
@@ -38,12 +38,12 @@
 
 - **输入**：Section 创建/销毁、Load 完成页、查询坐标范围、Mutation WriteSet、Pin 视图请求、Host DurabilityAck 转发、restore 页。
 - **输出**：Block/页只读视图、变更范围、压缩页、Section 可用性、Dirty 状态和稳定数据错误。
-- **本仓 Port 表面**（载荷信封字段见契约 `sectionPayload.envelope`；页 schema id 仍是死基线的 `voxel-chunk-page`，见 `lumio_voxel_contracts::legacy_baseline`）：`create(id) -> SectionRef | StableError`；`read(view, coord) -> BlockValue | Missing`；`borrow_read(ref, scope) -> ReadView`；`borrow_write(ref, reservation) -> WriteView`；`publish(write_set)`；`clear_dirty(ack)`；`materialize_pages(decoded)`；`seal_page(ref) -> CompressedPage`；`validate(ref) -> SectionHealth`；`unload(ref) -> Unloaded`。
+- **本仓 Port 表面**（载荷信封字段见活契约 `sectionPayload.envelope`）：`create(id) -> SectionRef | StableError`；`read(view, coord) -> BlockValue | Missing`；`borrow_read(ref, scope) -> ReadView`；`borrow_write(ref, reservation) -> WriteView`；`publish(write_set)`；`clear_dirty(ack)`；`materialize_pages(decoded)`；`seal_page(ref) -> CompressedPage`；`validate(ref) -> SectionHealth`；`unload(ref) -> Unloaded`。
 
 ## 依赖（编译 / 控制流 / 事件与数据）
 
 - **编译依赖**：`LumioNativeCore` 的内存、Buffer、压缩和稳定错误 Kernel；`lumio-voxel-contracts` 的契约常量与错误码。不依赖 `revision`、Runtime 或 Game 源码。
-- **被谁调用**：[world](../world/README.md)（Context/生命周期）、[streaming](../streaming/README.md)（加载结果与驱逐指令）、[mutation](../mutation/README.md)（CommitBatch WriteSet）、[query](../query/README.md)（ReadView）。
+- **被谁调用**：[world](../world/README.md)（Context/生命周期、驻留加载结果与驱逐指令）、[mutation](../mutation/README.md)（CommitBatch WriteSet）、[query](../query/README.md)（ReadView）。
 - **发布/消费**：发布页视图与 Dirty/可用性；消费 Host DurabilityAck（经 world）以 `clear_dirty`。不调用 `revision`。
 
 ## 生命周期与状态机
@@ -106,12 +106,8 @@ Loading/Ready/Dirty/Evicting -> Failed
 
 ## 对应 ADR、Schema 与 Fixture
 
-- 本仓 [0002](../../.spec/decisions/0002-barrier-commit-batch.md)、[0004](../../.spec/decisions/0004-snapshot-short-barrier-vs-quiesce.md)、[0006](../../.spec/decisions/0006-crate-map.md)、[0007](../../.spec/decisions/0007-v1.4-implementation-baseline.md)、[0013](../../.spec/decisions/0013-voxel-world-contract-and-section-rename.md)。
+- 本仓 [0002](../../.spec/decisions/0002-barrier-commit-batch.md)、[0004](../../.spec/decisions/0004-snapshot-short-barrier-vs-quiesce.md)、[0006](../../.spec/decisions/0006-crate-map.md)、[0013](../../.spec/decisions/0013-voxel-world-contract-and-section-rename.md)。
 - 活契约 `lumio.voxel-world.v1`（本仓副本 `crates/lumio-voxel-contracts/wire/voxel-world-v1.json`）：分层与尺寸、`identity` 键语法、`sectionPayload` 四档编码与载荷信封、`diffDispatch` 四态 presence、`residency` 脏页与回执覆盖。一致性由 `cargo test -p lumio-voxel-contracts --test voxel_world_conformance` 逐条断言。
-- 死基线 `LGE-V1.4-2026-08-27` 的只读镜像仅余产物 id 在消费：页 schema id `voxel-chunk-page`、驻留状态机 id `VoxelChunkResidency`，收在 `lumio_voxel_contracts::legacy_baseline`；契约不定义的引擎通用失败仍报其 `STABLE_ERROR_IDS`。
+- 错误 id 只有活契约 `errorCodes` 那一套 snake_case 命名空间；本模块不得另立第二套。
 
-## 尚未批准的决策门
-
-- **VOX-D-002**（Block 存储和压缩策略）：临时通过 Adapter/页接口隔离，需密度、CPU、内存、许可证和确定性 Benchmark。
-
-> **VOX-D-001（数值 profile）已由契约收口**：Section 16³ = 4096 格、每 Chunk 16 个 Section、世界高 256 格、调色板上限 256 项均由 `limits` 冻结（`limits.notes`：一经冻结即不可变更）。原门里「尺寸待 Bench」的部分不再成立；剩余的页大小与内存预算调优归 VOX-D-002。历史记录见 [`docs/evidence/decision-gates/VOX-D-001-chunk-profile.md`](../../docs/evidence/decision-gates/VOX-D-001-chunk-profile.md)。
+> **数值 profile 由契约冻结，不再是决策门**：Section 16³ = 4096 格、每 Chunk 16 个 Section、世界高 256 格、调色板上限 256 项均由 `limits` 冻结（`limits.notes`：一经冻结即不可变更）。剩余可调的只有存储后端选择与内存预算，属实现细节，改动记本仓 ADR。

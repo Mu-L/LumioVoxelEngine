@@ -22,21 +22,19 @@
 </div>
 <!-- lumio-community:end -->
 
-## 架构基线
+## 公共契约来源
 
-- Baseline：`LGE-V1.4-2026-08-27`
-- 唯一架构源：`LumioGameEngineArchitecture`
-- 本地镜像：[`docs/architecture/LumioGameEngine_Architecture_v1.4.md`](docs/architecture/LumioGameEngine_Architecture_v1.4.md)
-- 实现蓝图：[`docs/plans/lve-v1.4-implementation-blueprint.md`](docs/plans/lve-v1.4-implementation-blueprint.md)
-- 历史来源（非当前规范）：`LGE-V1.3-2026-08-27` 的设计包 [`docs/LumioVoxelEngine_Framework_Design_LGE-V1.3/`](docs/LumioVoxelEngine_Framework_Design_LGE-V1.3/) 仅作需求提取来源；与 V1.4 或仓内 ADR 0006 冲突的 crate、字段和依赖方向无效。
+体素公共语义的**唯一真值**是架构仓的活契约 `engine/wire/voxel-world-v1.json`（`contractId: lumio.voxel-world.v1`）——分层命名、规范键、限值、缺块四态与错误码都在那里定义。本仓在 [`crates/lumio-voxel-contracts/wire/voxel-world-v1.json`](crates/lumio-voxel-contracts/wire/voxel-world-v1.json) 保存逐字节副本，`lumio_voxel_contracts::voxel_world::CONTRACT_SHA256` 与一致性测试证明副本没有漂移。
 
-本仓库拥有 VoxelWorld 的权威数据和领域生命周期。Server 保存权威世界，Client 保存独立 VoxelReplicaWorld；LocalEmbedded 也必须创建两份实例。C# Runtime 只能通过版本化 `IVoxelWorldPort` 和生成契约访问，不能读取内部 Section Storage。
+改契约的顺序是：**架构仓改 JSON → 复制到本仓 `wire/` → 更新常量 → 一致性测试变绿**。本仓不得单方面改写公共语义，也不得维护第二套 Schema、ID 或错误码命名空间。
 
-体素分层语义的唯一真值是架构仓 `engine/wire/voxel-world-v1.json`（`contractId: lumio.voxel-world.v1`）：**Section** 是 16×16×16 = 4096 格的数据单元，是最小同步单位、驻留单位和 `SectionRevision` 的版本锚点；**Chunk** 是 16 个 Section 竖着摞成的列（16×256×16），只作存档打包与按列计算的容器，不携带数据、不持有独立版本。本仓现状见 [`.spec/knowledge/features/voxel-section-chunk.md`](.spec/knowledge/features/voxel-section-chunk.md) 与 [0013](.spec/decisions/0013-voxel-world-contract-and-section-rename.md)。
+- 契约文件：架构仓 `engine/wire/voxel-world-v1.json`
+- 设计说明：架构仓 `.spec/knowledge/features/voxel.md`
+- 本仓现状：[`.spec/knowledge/features/voxel-section-chunk.md`](.spec/knowledge/features/voxel-section-chunk.md) 与 [0013](.spec/decisions/0013-voxel-world-contract-and-section-rename.md)
 
-## Architecture Gate
+按该契约：**Section** 是 16×16×16 = 4096 格的数据单元，是最小同步单位、驻留单位和 `SectionRevision` 的版本锚点；**Chunk** 是 16 个 Section 竖着摞成的列（16×256×16），只作存档打包与按列计算的容器，不携带数据、不持有独立版本。
 
-跨仓公共 Voxel Contract、Revision/Snapshot Schema、ID Registry、正向/失败 Fixture 和契约校验器只在 `LumioGameEngineArchitecture` 发布与校验；本仓库的 Voxel 领域源 Schema 必须与该基线同步。Section/World 格式变更必须先更新源 Schema、Migration/Fixture 和 Baseline，再生成本仓库使用的只读产物；校验命令为 `python3 tools/lumio_contract.py validate`（在架构源执行）。
+本仓库拥有 VoxelWorld 的权威数据和领域生命周期。Server 保存权威世界，Client 保存独立 VoxelReplicaWorld；LocalEmbedded 也必须创建两份实例。C# Runtime 只能通过版本化 `IVoxelWorldPort` 访问，不能读取内部 Section Storage。
 
 ## 拥有的状态与生命周期
 
@@ -51,18 +49,16 @@ Host 负责创建和销毁实例，VoxelEngine 负责实例内部状态转换和
 
 模块地图、依赖方向、状态所有权和各模块边界契约见 [`modules/README.md`](modules/README.md)。
 
-| 子模块 | 责任 | 物理 crate | 优先级 |
+| 子模块 | 责任 | 对应 `voxel.md` 模块 | 物理 crate |
 | --- | --- | --- | --- |
-| [`world`](modules/world/README.md) | VoxelWorld 实例、Role/Context 和实例生命周期 | `lumio-voxel-world` | P0 |
-| [`section`](modules/section/README.md) | Section 布局、Block、坐标、页编码和驻留状态 | `lumio-voxel-domain` | P0 |
-| [`revision`](modules/revision/README.md) | World/Section Revision、比较和 Snapshot Pin | `lumio-voxel-domain` | P0 |
-| [`query`](modules/query/README.md) | 只读批量查询、缺 Section 结果和版本返回 | `lumio-voxel-ops` | P0 |
-| [`mutation`](modules/mutation/README.md) | 单域 Mutation、Prepare Token、幂等 Commit/Abort | `lumio-voxel-ops` | P0 |
-| [`snapshot`](modules/snapshot/README.md) | Snapshot/Diff、Canonical 编码、校验和恢复 | `lumio-voxel-ops` | P0 |
-| [`streaming`](modules/streaming/README.md) | Load/Unload、优先级、预算、取消和背压 | `lumio-voxel-ops` | P2 |
-| [`spatial`](modules/spatial/README.md) | Voxel 候选、遮挡和带 Revision 的空间 Source | `lumio-voxel-project` | P2 |
-| [`migration`](modules/migration/README.md) | Section/World Schema 转换、校验和失败保留 | `lumio-voxel-migration` | P2 |
-| [`mesh-collision`](modules/mesh-collision/README.md) | Mesh/Collision Source 构建，不拥有 Gameplay 规则 | `lumio-voxel-project` | P2 |
+| [`section`](modules/section/README.md) | Section 分层、方块编码、块存储三态、改动层与派发 | M1 / M1a / M2 / M5 | `lumio-voxel-domain` |
+| [`revision`](modules/revision/README.md) | World/Section Revision、读取令牌、Pin/COW 与保留 | M6 | `lumio-voxel-domain` |
+| [`query`](modules/query/README.md) | 有界只读批量查询、缺 Section 四态、批量读与物理检测 | M7 / M7a | `lumio-voxel-ops`、`lumio-voxel-project` |
+| [`mutation`](modules/mutation/README.md) | 权威写入与事务：Prepare/Reservation、幂等 Commit/Abort | M6 | `lumio-voxel-ops` |
+| [`snapshot`](modules/snapshot/README.md) | Capture/Diff、Canonical 编码、校验与恢复输入 | M9 | `lumio-voxel-ops` |
+| [`world`](modules/world/README.md) | 实例组装、Role/Context 生命周期、Barrier 入口与驻留 | M6 / M8 | `lumio-voxel-world` |
+
+尚无代码的模块（M3 光照、M4 网格生成与零拷贝交付、M6a 方块与实体绑定、M10 存档可读性）不建目录；开卡时再按本表加行。
 
 ## 职责
 
@@ -113,17 +109,13 @@ NativeCore 提供通用空间 Kernel；本仓库根据 Section/Block/遮挡/可�
 - Rust toolchain、平台 SDK 和经过供应链审查的通用 crates。
 - 不依赖 `LumioGameRuntime`、Server、Client 或 Game 源码；Port 依赖只通过版本化契约。
 
-## Generated Contract Dependencies
-
-实现阶段由本仓库负责 Voxel 领域源 API、Revision/Error/Capability 定义及行为测试；跨仓开发期接口以 `LumioGameEngine` SDK 为准。SDK 聚合层负责统一 Native Header、ABI Binding 和最终托管入口；不得同时维护第二套 P/Invoke 签名。Runtime 只消费 `IVoxelWorldPort`/SDK API。
-
 ## Runtime Loading Relationships
 
 ```text
-LumioCoreEngine package
+LumioEngineSDK Native
   -> Host Loader
   -> VoxelWorld instance (authority or replica)
-  -> Runtime IVoxelWorldPort / generated Voxel Contract
+  -> Runtime IVoxelWorldPort
 ```
 
 Server/Client/Local 分别创建实例；Local 的两份世界不能共享对象引用、Section Buffer 或 Revision 写入。
@@ -162,8 +154,8 @@ Manifest 至少包含 Voxel API/ABI、World/Section Schema、压缩字典、Migr
 
 ## 当前阶段与开发节奏
 
-1. **Architecture Gate**：消费 `LGE-V1.4-2026-08-27` 已冻结的 World/Section/Revision/Mutation/Snapshot Schema 和 Port 错误语义；分层与键的名字以活契约 `lumio.voxel-world.v1` 为准（[0013](.spec/decisions/0013-voxel-world-contract-and-section-rename.md)）。
-2. **Foundation**：按七 crate DAG 实现 `world/section/revision/query/mutation/snapshot` 单域闭环和 NativeHeadless 测试。
+1. **契约对齐**：分层、规范键、限值、缺块四态与错误码只从活契约 `lumio.voxel-world.v1` 取（[0013](.spec/decisions/0013-voxel-world-contract-and-section-rename.md)）；副本漂移由一致性测试拦住。
+2. **Foundation**：按六 crate DAG 实现 `world/section/revision/query/mutation/snapshot` 单域闭环和 headless 测试。
 3. **Vertical Slice**：接入 CrossWorldTxn、Local 双实例、Snapshot/WAL 和 Reference Differential。
-4. **Production Hardening**：Streaming/AOI/恢复/Migration/损坏注入和性能曲线。
-5. **P2**：复杂空间优化、可替换后端和跨服迁移；不改变 V1 权威边界。物理 crate 仍只允许 ADR 0006 的七仓。
+4. **Production Hardening**：Streaming/AOI/恢复/损坏注入和性能曲线。
+5. **P2**：复杂空间优化、可替换后端和跨服迁移；不改变 V1 权威边界。物理 crate 仍只允许 [0006](.spec/decisions/0006-crate-map.md) 登记的那几个。

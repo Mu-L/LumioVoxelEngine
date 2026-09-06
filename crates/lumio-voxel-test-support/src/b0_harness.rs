@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::crate_dag::{self, SEVEN_CRATES};
+use crate::crate_dag::{self, FROZEN_CRATES};
 use crate::deterministic_executor::{DeterministicExecutor, Schedule};
 use crate::generated_clean;
 use crate::reference_harness::GeneratedVoxelOperation;
@@ -72,7 +72,7 @@ impl B0VerificationReport {
 pub fn run_b0_matrix() -> B0VerificationReport {
     let cases = vec![
         case_artifact_hash_lock(),
-        case_seven_crate_dag(),
+        case_frozen_crate_dag(),
         case_revision_monotonic(),
         case_pin_reclaim(),
         case_section_four_state(),
@@ -97,8 +97,8 @@ pub fn case_artifact_hash_lock() -> B0CaseResult {
     wrap("1", "artifact hash lock", artifact_hash_lock)
 }
 
-pub fn case_seven_crate_dag() -> B0CaseResult {
-    wrap("2", "seven crate DAG", seven_crate_dag)
+pub fn case_frozen_crate_dag() -> B0CaseResult {
+    wrap("2", "frozen crate DAG", frozen_crate_dag)
 }
 
 pub fn case_revision_monotonic() -> B0CaseResult {
@@ -207,9 +207,9 @@ fn artifact_hash_lock() -> Result<String, String> {
     ))
 }
 
-fn seven_crate_dag() -> Result<String, String> {
-    if SEVEN_CRATES.len() != 7 {
-        return Err(format!("SEVEN_CRATES len {}", SEVEN_CRATES.len()));
+fn frozen_crate_dag() -> Result<String, String> {
+    if FROZEN_CRATES.len() != 6 {
+        return Err(format!("FROZEN_CRATES len {}", FROZEN_CRATES.len()));
     }
     let legal = crate_dag::parse_fixture_graph(include_str!(
         "../../../tools/architecture/fixtures/dag-legal.json"

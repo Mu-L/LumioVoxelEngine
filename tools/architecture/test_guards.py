@@ -69,15 +69,14 @@ def main() -> int:
     )
     id_to_name = {p["id"]: p["name"] for p in meta["packages"]}
     members = [id_to_name[mid] for mid in meta["workspace_members"]]
-    if len(members) != 7:
-        raise SystemExit(f"expected 7 members, got {members}")
+    if len(members) != 6:
+        raise SystemExit(f"expected 6 members, got {members}")
     for name in (
         "lumio-voxel-contracts",
         "lumio-voxel-domain",
         "lumio-voxel-ops",
         "lumio-voxel-world",
         "lumio-voxel-project",
-        "lumio-voxel-migration",
         "lumio-voxel-test-support",
     ):
         if name not in members:
@@ -85,7 +84,7 @@ def main() -> int:
     joined = " ".join(members)
     if any(tok in joined for tok in ("persistence", "runtime", "ffi", "common")):
         raise SystemExit(f"forbidden crate in members: {members}")
-    print("PASS cargo metadata seven members", members)
+    print("PASS cargo metadata frozen members", members)
     print("ALL_PASS")
     return 0
 

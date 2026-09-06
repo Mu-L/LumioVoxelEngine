@@ -1,7 +1,7 @@
 # 0013 · 体素公共语义改从 `voxel-world-v1.json` 取，16³ 数据单元改名 Section
 
 - 日期:2026-09-04
-- 状态:生效
+- 状态:被 [0014](0014-exit-legacy-baseline-contract-regime.md) 取代
 
 ## 背景
 
