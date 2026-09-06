@@ -503,19 +503,32 @@
       "signatures": "具体的 C 函数签名、结构布局与调用约定属 engine/abi/native-abi.json",
       "why": "语义要跨 Rust / 托管 / 前端 / 验收四方一致，签名只在托管与 Native 之间成立"
     },
+    "shape": {
+      "statement": "v1 的 sweep 与 overlap 只接受一种形状：世界空间的轴对齐盒（AABB）。形状与位姿不是两样东西——盒子由 center 与 halfExtents 两个 world_point 完整描述，center 就是位姿。",
+      "v1Shape": "Aabb",
+      "fields": {
+        "center": "盒心的世界坐标，三个 f32（world_point）；它就是位姿，不存在单独的位姿描述符",
+        "halfExtents": "沿三轴的半长，三个 f32（world_point）；每个分量必须是有限值且大于 0"
+      },
+      "poseIsCenter": "位姿只有平移，就是 center；v1 没有旋转，也没有缩放字段",
+      "noRotation": "需要旋转包围盒时，调用方自己取一个能包住它的 AABB 传进来，不得在契约之外自造姿态表示",
+      "inlineByValue": "形状与位姿必须按值内联进请求结构，不得退化成指向未声明布局的裸指针——指针的目标布局若不在契约里，四方就无法一致地读同一份数据，生命周期与对齐还得各实现自己猜",
+      "shapeSetIsClosed": "v1 的形状集合到此为止（只有 Aabb）。新增形状是契约变更，须开 ADR 并同步 ABI，不得由实现方私自扩展",
+      "degenerateShape": "任一 halfExtents 分量为 0、负数或非有限值即非法请求，由调用方保证；体素侧不得把退化盒静默当成一个点，也不得静默当成 Miss"
+    },
     "queries": {
       "raycast": {
-        "input": "起点、单位方向、最大距离、材质类过滤器",
+        "input": "起点、单位方向、最大距离、材质类过滤掩码",
         "output": "命中格坐标、该格 BlockId、交点、面法线、行进距离；或未命中；或未决",
         "method": "DDA 沿射线逐格步进"
       },
       "overlap": {
-        "input": "形状与位姿、材质类过滤器、调用方提供的结果缓冲与容量",
+        "input": "AABB（center 与 halfExtents）、材质类过滤掩码、调用方提供的结果缓冲与容量",
         "output": "相交的格坐标与 BlockId 列表、实际条数、truncated 标志",
         "buffering": "结果写进调用方提供的缓冲；体素侧不分配、不返回需要释放的句柄"
       },
       "sweep": {
-        "input": "形状与位姿、本帧位移、材质类过滤器",
+        "input": "AABB（center 与 halfExtents）、本帧位移、材质类过滤掩码",
         "output": "是否碰撞、可行进比例（0~1）、碰撞点、面法线、命中格坐标与 BlockId；或未决",
         "note": "只回答会不会撞、撞在哪；怎么响应由调用方决定"
       }
@@ -530,13 +543,42 @@
       }
     },
     "filter": {
-      "shape": "按材质类的掩码",
+      "representation": "一个按材质类分位的 u32 位掩码，随请求按值传入",
       "source": "阻挡与否只能来自材质类表；查询实现不得自带一份碰撞行为分支",
+      "materialMask": {
+        "type": "u32",
+        "bitOrder": "位序按 materialClasses.v1Scope.classes 的声明顺序，从最低位起，一类占一位",
+        "bits": {
+          "Solid": 0,
+          "Liquid": 1
+        },
+        "values": {
+          "Solid": 1,
+          "Liquid": 2
+        },
+        "assignedBitCount": 2,
+        "combining": "多个类按位或组合：Solid 或 Liquid 都要就是 3",
+        "zeroMatchesNothing": "掩码为 0 表示不匹配任何材质类，查询必定返回 Miss（Unresolved 优先级仍高于 Miss）。它不是「全选」，也不是错误码——想要全选就显式写出 3",
+        "reservedBitsMustBeZero": "第 2 位及以上尚未分配给任何材质类，必须为 0；置位即 unknown_material_class，不得当作「未来的类」静默忽略",
+        "appendOnly": "新增材质类只能取下一个更高位，已分配的位永不重排——重排等于所有写死掩码的调用方一起改",
+        "notAnIdSegment": "掩码位是运行期过滤器，与 BlockType 的 ID 分段无关，见 materialClasses.noIdSegmentEncoding"
+      },
       "examples": {
-        "角色移动": "只要 Solid——Liquid 不阻挡",
-        "视线与交互": "只要 Solid——Liquid 透过",
-        "是否在水里": "只要 Liquid"
+        "角色移动": "只要 Solid——Liquid 不阻挡；mask = 1",
+        "视线与交互": "只要 Solid——Liquid 透过；mask = 1",
+        "是否在水里": "只要 Liquid；mask = 2"
       }
+    },
+    "materialClassTable": {
+      "statement": "查询用来解析材质类的那张表，由宿主在创建体素世界时注入；查询接口本身不带目录参数。",
+      "nativeEntry": "world-creation-injection",
+      "source": "官方方块目录 blockCatalog 的 materialClass 一列——即 LumioConfig 编译出的同一份配表，不是查询实现里的第二份表",
+      "whyNotARootSlot": "目录不是逐次查询的输入，而是世界的构造状态。世界句柄已经是每个查询的第一个参数，再给根表加一个目录槽等于同一份数据开两条入口，多一条就多一处能对不上的地方",
+      "whyNotAQueryParameter": "每次查询都带一遍目录会让同一帧内两次查询有机会看到两份表，直接违背 determinism",
+      "resolvedBeforeQueryable": "世界在能被查询之前必须已解析出完整的 BlockType → 材质类映射；没有注入目录的世界不得回答任何查询",
+      "noBuiltInFallback": "不得回落到实现内置的默认表，也不得把解析不出材质类的方块当作不阻挡；解析不出即 unknown_material_class",
+      "immutableWithinTick": "同一 Tick 内这张表不得变更，否则同一帧的两次查询会得到不同结果",
+      "testHelpersAreNotAPath": "实现仓的测试助手直接构造材质表只是测试便利，不构成真实消费方的注入路径；生产路径只有创建世界时注入这一条"
     },
     "determinism": "同一份世界、同一组输入，服务器与客户端必须得到同一个结果；预测与对账建立在这条上。",
     "readOnly": "查询不得改变世界的任何一格；任何写入必须走 prepare/commit 的权威路径。",
