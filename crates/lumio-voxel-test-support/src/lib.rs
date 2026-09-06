@@ -9,8 +9,6 @@ pub mod b2_harness;
 pub mod crate_dag;
 pub mod deterministic_executor;
 pub mod fault_injection;
-pub mod fixture_runner;
-pub mod generated_clean;
 pub mod mvp_harness;
 pub mod reference_harness;
 

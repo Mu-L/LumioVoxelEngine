@@ -1,37 +1,26 @@
-//! FIPS 180-4 known-answer tests for the two hand-written SHA-256 implementations.
+//! `plumbing` 的 known-answer 测试:SHA-256、Hash 链、有界缓冲。
 //!
-//! The two implementations are kept separate deliberately. `generated_clean` hashes the
-//! generated tree to detect hand-edits, and the contract-runtime hasher *lives inside that
-//! tree* — `rust/lumio-gen-contract-runtime/src/sha256.rs` is itself a locked entry. Hashing
-//! the tree with a hasher taken from it would let a tampered generated file certify itself,
-//! so the guard must keep its own copy. `implementations_agree_*` below is what stops the
-//! two copies from drifting apart.
+//! 仓里只剩一份 SHA-256。过去有两份——生成物镜像里的那份,和 `generated_clean` 守卫
+//! 为了不用被审计对象审计自己而自带的那份([ADR 0010])。镜像与守卫随 [ADR 0014]
+//! 一起删除后,被审计的对象没有了,两份实现的差分守卫也随之失去对象;正确性改由
+//! 下面这些公布向量单独承担。
 //!
-//! Expected digests: the five vectors in `nist_*` and `million_a_*` are the published
-//! FIPS 180-4 / NIST CSRC answers; the padding-boundary digests were produced by an
-//! independent reference (`openssl dgst -sha256`), not by either implementation under test.
+//! 期望摘要:`nist_*` 与 `million_a_*` 是 FIPS 180-4 / NIST CSRC 公布的答案;
+//! 补白边界的摘要由独立参照(`openssl dgst -sha256`)产生,不是被测实现自己算的。
+//!
+//! [ADR 0010]: ../../../.spec/decisions/0010-generated-clean-keeps-its-own-sha256.md
+//! [ADR 0014]: ../../../.spec/decisions/0014-exit-legacy-baseline-contract-regime.md
 
-use lumio_voxel_test_support::generated_clean::sha256_hex as guard_sha256_hex;
+use lumio_voxel_contracts::voxel_world::SECTION_PRESENCE;
+use lumio_voxel_contracts::{
+    BoundedBuffer, Hash256, hash_chain_append, hash_chain_verify, sha256, sha256_hex,
+};
 
-fn contract_sha256_hex(data: &[u8]) -> String {
-    lumio_voxel_contracts::sha256(data)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-
-/// Every vector is asserted against both implementations, naming which one failed.
 fn assert_kat(label: &str, data: &[u8], expected: &str) {
     assert_eq!(
-        guard_sha256_hex(data),
+        sha256_hex(data),
         expected,
-        "generated_clean::sha256_hex wrong for KAT {label} (len {})",
-        data.len()
-    );
-    assert_eq!(
-        contract_sha256_hex(data),
-        expected,
-        "lumio_gen_contract_runtime::sha256 wrong for KAT {label} (len {})",
+        "sha256_hex wrong for KAT {label} (len {})",
         data.len()
     );
 }
@@ -135,36 +124,25 @@ fn padding_boundary_lengths() {
     }
 }
 
-/// Deterministic byte pattern; avoids a dependency just to get varied inputs.
-fn lcg_bytes(len: usize, seed: u64) -> Vec<u8> {
-    let mut state = seed;
-    (0..len)
-        .map(|_| {
-            state = state
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (state >> 33) as u8
-        })
-        .collect()
+/// Hash 链与有界缓冲:追加、校验、满载拒绝。
+#[test]
+fn hash_chain_and_bounded_buffer() {
+    let genesis = Hash256(sha256(b""));
+    let next = hash_chain_append(&genesis, b"rec-1");
+    assert!(hash_chain_verify(&genesis, b"rec-1", &next).is_ok());
+    assert!(hash_chain_verify(&genesis, b"rec-2", &next).is_err());
+
+    let mut buf = BoundedBuffer::new(1);
+    assert!(buf.push(1).is_ok());
+    assert!(buf.push(2).is_err(), "满载必须拒绝,不得静默增长");
+    assert_eq!(buf.as_slice(), &[1]);
 }
 
-/// Differential guard: the two copies must stay byte-identical as either one is edited.
+/// 缺块四态只从活契约取,不从任何镜像取。
 #[test]
-fn implementations_agree_on_length_sweep() {
-    for len in 0..=200usize {
-        let data = lcg_bytes(len, len as u64 + 1);
-        assert_eq!(
-            guard_sha256_hex(&data),
-            contract_sha256_hex(&data),
-            "implementations disagree at length {len}"
-        );
-    }
-    for len in [1_000usize, 4_096, 65_536] {
-        let data = lcg_bytes(len, len as u64);
-        assert_eq!(
-            guard_sha256_hex(&data),
-            contract_sha256_hex(&data),
-            "implementations disagree at length {len}"
-        );
-    }
+fn section_presence_comes_from_the_live_contract() {
+    assert_eq!(
+        SECTION_PRESENCE,
+        &["Ready", "Unchanged", "Pending", "Unavailable"]
+    );
 }

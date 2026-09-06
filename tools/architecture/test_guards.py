@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive the shipped DAG/generated-clean tools against fixtures and live cargo metadata."""
+"""Drive the shipped crate-DAG tool against fixtures and live cargo metadata."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PY = sys.executable
 DAG = ROOT / "tools" / "architecture" / "check_crate_dag.py"
-CLEAN = ROOT / "tools" / "architecture" / "check_generated_clean.py"
 FIX = ROOT / "tools" / "architecture" / "fixtures"
 
 
@@ -49,16 +48,6 @@ def main() -> int:
     )
     expect_ok([PY, str(DAG), str(FIX / "dag-legal.json")])
     expect_ok([PY, str(DAG)])
-    expect_ok([PY, str(CLEAN)])
-
-    generated = ROOT / "crates" / "lumio-voxel-contracts" / "generated"
-    rogue = generated / "handwritten-guard.rs"
-    rogue.write_text("pub struct FakeDto;\n", encoding="utf-8")
-    try:
-        expect_fail([PY, str(CLEAN)], "未锁定文件")
-    finally:
-        rogue.unlink(missing_ok=True)
-    expect_ok([PY, str(CLEAN)])
 
     meta = json.loads(
         subprocess.check_output(

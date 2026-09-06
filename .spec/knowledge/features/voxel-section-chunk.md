@@ -103,10 +103,10 @@ Section 的层号取值 0~15 恰好 4 bit。
 
 ## 相关
 
-- 决策:[0013](../../decisions/0013-voxel-world-contract-and-section-rename.md)、
-  [0007](../../decisions/0007-v1.4-implementation-baseline.md)(采用已废弃基线的那条)。
+- 决策:[0013](../../decisions/0013-voxel-world-contract-and-section-rename.md)(改从活契约取)、
+  [0014](../../decisions/0014-exit-legacy-baseline-contract-regime.md)(退出旧合同制,删镜像与 legacy_baseline)。
 - 代码:`crates/lumio-voxel-domain/src/key.rs`、`crates/lumio-voxel-domain/src/section/`、
-  `crates/lumio-voxel-contracts/src/voxel_world.rs`、`crates/lumio-voxel-contracts/src/legacy_baseline.rs`。
+  `crates/lumio-voxel-contracts/src/voxel_world.rs`。
 - 测试:`crates/lumio-voxel-domain/tests/section_chunk_keys.rs`、
   `crates/lumio-voxel-domain/tests/section_block_storage.rs`、
   `crates/lumio-voxel-domain/tests/section_payload_contract.rs`、

@@ -1,8 +1,6 @@
 use lumio_voxel_test_support::deterministic_executor::{DeterministicExecutor, Schedule};
 use lumio_voxel_test_support::fault_injection::FaultPoint;
-use lumio_voxel_test_support::fixture_runner::run_fixture;
 use lumio_voxel_test_support::reference_harness::{GeneratedVoxelOperation, VoxelPortHarness};
-use std::path::PathBuf;
 
 fn op(seq: u64, payload: &[u8]) -> GeneratedVoxelOperation {
     GeneratedVoxelOperation {
@@ -10,10 +8,6 @@ fn op(seq: u64, payload: &[u8]) -> GeneratedVoxelOperation {
         seq,
         payload: payload.to_vec(),
     }
-}
-
-fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
 #[test]
@@ -61,19 +55,6 @@ fn five_fault_points() {
             assert!(!out.recoverable);
         }
     }
-}
-
-#[test]
-fn fixture_runner_positive_and_unknown_schema() {
-    let mut port = VoxelPortHarness::new();
-    let ok = run_fixture(&fixtures_dir().join("positive-query.json"), &mut port).unwrap();
-    assert!(ok.passed, "{ok:?}");
-    assert_eq!(ok.seed, 1);
-    assert_eq!(ok.trace.outcomes.len(), 2);
-
-    let mut port = VoxelPortHarness::new();
-    let bad = run_fixture(&fixtures_dir().join("unknown-schema.json"), &mut port);
-    assert!(bad.unwrap_err().contains("unknown schema_id"));
 }
 
 #[test]
