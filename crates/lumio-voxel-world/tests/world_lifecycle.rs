@@ -278,8 +278,9 @@ fn illegal_created_start_running_fails_and_state_unchanged() {
     let before = world.state_view().lifecycle();
     assert_eq!(before, "Created");
     let cmd = lifecycle_cmd(&world, "Start", "Running");
-    let _err =
+    let err =
         admit(&mut world, cmd).expect_err("Created --Start--> Running is not on SimulationSession");
+    assert_eq!(err.error_id(), "InvalidHandle");
     assert_eq!(world.state_view().lifecycle(), before);
     assert_eq!(world.state_view().lifecycle_machine(), session_machine());
 }
@@ -324,8 +325,9 @@ fn pause_rejects_mutation_admit_resume_allows_without_commit() {
     );
     let paused = world.state_view().lifecycle();
     let paused_cmd = mutation_cmd(&world, "txn-paused");
-    let _err =
+    let err =
         admit(&mut world, paused_cmd).expect_err("Paused must reject writes before any write path");
+    assert_eq!(err.error_id(), "ClaimNotGranted");
     assert_eq!(world.state_view().lifecycle(), paused);
 
     let resume = lifecycle_cmd(&world, "Resume", "Running");

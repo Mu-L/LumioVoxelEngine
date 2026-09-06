@@ -96,7 +96,6 @@ fn publication_capture_is_old_or_new_never_mixed() {
 
 #[test]
 fn port_adapter_interns_schema_and_binding() {
-    assert!(std::ptr::eq(PORT_SCHEMA, PORT_SCHEMA));
     assert_eq!(PORT_SCHEMA, "voxel-world-port");
     assert_eq!(PORT_RUST_TYPE, "VoxelWorldPort");
     assert_case_ok(case_port_schema_intern());

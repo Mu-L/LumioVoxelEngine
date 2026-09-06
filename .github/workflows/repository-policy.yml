@@ -32,6 +32,33 @@ jobs:
           grep -q '^## Headless Test Surface$' README.md
           grep -q '^## 子模块' README.md
           grep -q '^## 当前阶段与开发节奏$' README.md
+      - name: Validate legacy contract symbols stay out of live code (ADR 0014)
+        run: |
+          # ADR 0014:退出旧合同制后不留兼容层、不留兜底常量。旧符号一旦写回活代码就红。
+          # pathspec 必须是 'crates/*/src/*'——git pathspec 的 * 跨 /,写成 'crates/*/src'
+          # 会要求路径以 src 结尾,恒零命中,是一道空转门。
+          if [ "$(git grep -l 'fn ' -- 'crates/*/src/*' | wc -l)" -eq 0 ]; then
+            echo "::error::pathspec 匹配不到任何源文件,这道门是空转的" >&2
+            exit 1
+          fi
+          # SCHEMA_EPOCH 带词边界:裁决 3 允许本仓自持的 SNAPSHOT_SCHEMA_EPOCH。
+          set +e
+          git grep -n \
+            -e 'Generated[A-Z]' \
+            -e 'BASELINE_ID' \
+            -e '\bSCHEMA_EPOCH' \
+            -e 'STABLE_ERROR_IDS' \
+            -e 'is_stable_error_id' \
+            -e 'P0_DECISION_GATES' \
+            -e 'from_generated' \
+            -- 'crates/*/src/*'
+          status=$?
+          set -e
+          case "$status" in
+            0) echo "::error::旧合同制符号回流到 crates/*/src/**(见上方命中行)" >&2; exit 1 ;;
+            1) echo "no legacy contract symbols under crates/*/src/**" ;;
+            *) echo "::error::git grep exited with $status" >&2; exit "$status" ;;
+          esac
 
   cargo:
     name: Cargo workspace

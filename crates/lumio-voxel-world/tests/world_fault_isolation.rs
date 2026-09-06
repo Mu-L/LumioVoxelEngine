@@ -294,6 +294,7 @@ fn trip_world_a_leaves_world_b_progressing_and_keeps_published_root() {
     assert_eq!(identity_of(&world_b), id_b);
 
     let write_a = mutation_cmd(&world_a, "txn-a-after-trip");
-    let _err_a = admit(&mut world_a, write_a).expect_err("A rejects writes after trip");
+    let err_a = admit(&mut world_a, write_a).expect_err("A rejects writes after trip");
+    assert_eq!(err_a.error_id(), "ClaimNotGranted");
     assert_eq!(identity_of(&world_a), id_a);
 }

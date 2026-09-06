@@ -1,7 +1,7 @@
 # 0006 · 按分层合并 crate，不按逻辑模块开仓
 
 - 日期:2026-08-27
-- 状态:生效
+- 状态:生效(crate 清单被 [0014](0014-exit-legacy-baseline-contract-regime.md) 部分取代)
 
 ## 背景
 

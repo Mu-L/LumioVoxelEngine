@@ -617,6 +617,10 @@ fn injected_post_publication_fault_does_not_roll_the_visible_cut_back() {
         .expect("post-publication fault fires after the visible swap");
     // An already-visible write is never recoverable and must not be undone.
     assert!(!FaultInjector::recoverable(FaultPoint::PostPublication));
+    assert_eq!(
+        FaultInjector::error_id(FaultPoint::PostPublication),
+        "PartialLoadRolledBack"
+    );
 
     let after = auth.capture();
     assert_consistent_cut(&after);
