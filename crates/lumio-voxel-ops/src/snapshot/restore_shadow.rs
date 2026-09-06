@@ -8,7 +8,7 @@ use crate::canonical::{CanonicalObject, CanonicalValue};
 use lumio_voxel_contracts::sha256;
 use lumio_voxel_domain::publication::PublishedStateRoot;
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, SectionRevision, WorldRevision, to_generated_stamp,
+    RevisionStamp, SectionRevision, WorldRevision, to_revision_stamp,
 };
 use lumio_voxel_domain::section::{
     DirtyFrontier, SectionDeltaBuilder, SectionDirectoryBuilder, SectionReplacement, SectionSlot,
@@ -48,7 +48,7 @@ impl SealedRestoreCandidate {
         self.candidate_hash
     }
 
-    pub fn stamp(&self) -> &GeneratedRevisionStamp {
+    pub fn stamp(&self) -> &RevisionStamp {
         self.root.stamp()
     }
 
@@ -86,7 +86,7 @@ impl RestoreShadowBuilder {
                 .insert(section_id, SectionSlot::unchanged())
                 .map_err(|err| RestoreError::mapped(err.error_id()))?;
         }
-        let stamp = to_generated_stamp(
+        let stamp = to_revision_stamp(
             decoded.world_id(),
             decoded.context_id(),
             decoded.generation(),

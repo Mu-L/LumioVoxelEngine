@@ -9,7 +9,7 @@ use super::state::{
 };
 use lumio_voxel_ops::async_support::OriginToken;
 use lumio_voxel_ops::mutation::MutationRequest;
-use lumio_voxel_ops::query::GeneratedVoxelQueryRequest;
+use lumio_voxel_ops::query::VoxelQueryRequest;
 
 #[derive(Debug)]
 pub enum WorldCommand {
@@ -20,7 +20,7 @@ pub enum WorldCommand {
     },
     Query {
         origin: OriginToken,
-        request: GeneratedVoxelQueryRequest,
+        request: VoxelQueryRequest,
     },
     Mutation {
         origin: OriginToken,

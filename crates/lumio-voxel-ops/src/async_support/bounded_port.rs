@@ -1,7 +1,7 @@
-//! Bounded try_submit port. Full-load action is generated `QueueFull`.
+//! Bounded try_submit port. Full-load action is `QueueFull`.
 
 use super::origin::OriginEnvelope;
-use lumio_voxel_contracts::{BoundedBuffer, BufferFull, STABLE_ERROR_IDS};
+use lumio_voxel_contracts::{BoundedBuffer, BufferFull};
 use lumio_voxel_domain::config_snapshot::VoxelConfigSnapshot;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -19,7 +19,6 @@ impl SubmitError {
 
 /// Fail-closed full-load action from ADR-0005 / owner confirmation.
 pub fn full_load_action() -> &'static str {
-    debug_assert!(STABLE_ERROR_IDS.contains(&"QueueFull"));
     "QueueFull"
 }
 
@@ -32,10 +31,9 @@ pub struct BoundedJobPort<T> {
 
 /// Rebuild the bounded budget for a live occupancy.
 ///
-/// The generated `BoundedBuffer` has `push` but no release API, and generated
-/// code must not be hand-edited, so a freed slot is expressed by rebuilding the
-/// budget from the queue's current length. Occupancy is therefore always
-/// re-derived from the queue and can never drift below zero or wrap.
+/// The plumbing `BoundedBuffer` has `push` but no release API, so a freed slot is
+/// expressed by rebuilding the budget from the queue's current length. Occupancy is
+/// therefore always re-derived from the queue and can never drift below zero or wrap.
 fn occupancy_bound(slots: usize, occupancy: usize) -> BoundedBuffer {
     debug_assert!(occupancy <= slots);
     let mut bound = BoundedBuffer::new(slots);
@@ -72,7 +70,7 @@ impl<T> BoundedJobPort<T> {
     pub fn try_submit(&mut self, job: OriginEnvelope<T>) -> Result<(), SubmitError> {
         if job.config_hash != self.snapshot.config_hash() {
             return Err(SubmitError {
-                error_id: stable("EvidenceDigestMismatch"),
+                error_id: "EvidenceDigestMismatch",
             });
         }
         match self.bound.push(1) {
@@ -95,9 +93,4 @@ impl<T> BoundedJobPort<T> {
         self.bound = occupancy_bound(self.slots, self.queue.len());
         Some(job)
     }
-}
-
-fn stable(id: &'static str) -> &'static str {
-    debug_assert!(STABLE_ERROR_IDS.contains(&id));
-    id
 }

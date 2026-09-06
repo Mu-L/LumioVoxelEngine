@@ -2,9 +2,9 @@
 
 #![forbid(unsafe_code)]
 
-use crate::revision::{GeneratedRevisionStamp, REVISION_STAMP_SCHEMA};
+use crate::revision::{REVISION_STAMP_SCHEMA, RevisionStamp};
 use crate::section::{DirtyFrontier, SectionDirectoryRoot, SectionReplacement};
-use lumio_voxel_contracts::{SCHEMA_IDS, sha256};
+use lumio_voxel_contracts::sha256;
 
 /// Optional auxiliary indexes. This card ships the empty cut only.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -23,7 +23,7 @@ impl AuxiliaryIndexes {
 /// One immutable published cut. Members are never swapped independently.
 #[derive(Clone, Debug)]
 pub struct PublishedStateRoot {
-    stamp: GeneratedRevisionStamp,
+    stamp: RevisionStamp,
     directory: SectionDirectoryRoot,
     dirty_frontier: DirtyFrontier,
     indexes: AuxiliaryIndexes,
@@ -32,11 +32,11 @@ pub struct PublishedStateRoot {
 
 impl PublishedStateRoot {
     pub fn new(
-        stamp: GeneratedRevisionStamp,
+        stamp: RevisionStamp,
         directory: SectionDirectoryRoot,
         dirty_frontier: DirtyFrontier,
     ) -> Self {
-        let _ = revision_schema();
+        let _ = REVISION_STAMP_SCHEMA;
         let indexes = AuxiliaryIndexes::empty();
         let identity = fingerprint(&stamp, &directory, &dirty_frontier, &indexes, None);
         Self {
@@ -48,7 +48,7 @@ impl PublishedStateRoot {
         }
     }
 
-    pub fn stamp(&self) -> &GeneratedRevisionStamp {
+    pub fn stamp(&self) -> &RevisionStamp {
         &self.stamp
     }
 
@@ -79,16 +79,8 @@ impl PublishedStateRoot {
     }
 }
 
-fn revision_schema() -> &'static str {
-    SCHEMA_IDS
-        .iter()
-        .copied()
-        .find(|id| *id == REVISION_STAMP_SCHEMA)
-        .expect("voxel-revision-stamp must exist in generated SCHEMA_IDS")
-}
-
 fn fingerprint(
-    stamp: &GeneratedRevisionStamp,
+    stamp: &RevisionStamp,
     directory: &SectionDirectoryRoot,
     frontier: &DirtyFrontier,
     indexes: &AuxiliaryIndexes,

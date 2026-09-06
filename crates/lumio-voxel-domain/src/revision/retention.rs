@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use super::pin::{PinRegistry, RegistryState, lock_registry};
-use super::stamp::GeneratedRevisionStamp;
+use super::stamp::RevisionStamp;
 use std::sync::{Arc, Mutex};
 
 /// Minimum covering stamp still referenced by at least one live pin.
@@ -18,7 +18,7 @@ impl RetentionFrontier {
         }
     }
 
-    pub fn oldest_live(&self) -> Option<GeneratedRevisionStamp> {
+    pub fn oldest_live(&self) -> Option<RevisionStamp> {
         let inner = lock_registry(&self.inner);
         inner
             .slots

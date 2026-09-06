@@ -4,41 +4,33 @@
 
 use crate::crate_dag::{self, FROZEN_CRATES};
 use crate::deterministic_executor::{DeterministicExecutor, Schedule};
-use crate::generated_clean;
-use crate::reference_harness::GeneratedVoxelOperation;
+use crate::reference_harness::VoxelOperation;
 use crate::workspace_root_from_manifest;
-use lumio_voxel_contracts::legacy_baseline;
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_contracts::voxel_world as vw;
 use lumio_voxel_contracts::voxel_world::SECTION_PRESENCE;
-use lumio_voxel_contracts::{
-    BASELINE_ID, BINDINGS, SCHEMA_EPOCH, SCHEMA_IDS, STABLE_ERROR_IDS, is_stable_error_id, sha256,
-    verify_artifact_hashes,
-};
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::{
     PublicationAuthority, PublishedReadView, PublishedStateRoot,
 };
 use lumio_voxel_domain::revision::{
-    PinRegistry, REVISION_STAMP_SCHEMA, RetentionFrontier, RevisionAllocator, WorldRevision,
-    to_generated_stamp,
+    PinRegistry, RetentionFrontier, RevisionAllocator, WorldRevision, to_revision_stamp,
 };
 use lumio_voxel_domain::section::{
     CoveredSectionAck, DirtyFrontier, DurabilityAckContext, DurabilityAckEvidence,
     SectionDeltaBuilder, SectionDirectoryBuilder, SectionPage, SectionPayload, SectionSlot,
 };
 use lumio_voxel_ops::SNAPSHOT_FEATURE;
-use lumio_voxel_world::port::GeneratedVoxelWorldPortAdapter;
+use lumio_voxel_world::port::{PORT_RUST_TYPE, PORT_SCHEMA, VoxelWorldPortAdapter};
 use lumio_voxel_world::world::{
     VoxelWorld, WorldConfigAdapter, WorldDescriptor, intern_local_embedded_pair,
 };
-use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-pub const MATRIX_ROWS: usize = 10;
+pub const MATRIX_ROWS: usize = 9;
 
 const SEED_A: u64 = 0x00A1_1CE0;
 const SEED_B: u64 = 0x00B0_5EED;
@@ -53,25 +45,19 @@ pub struct B0CaseResult {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct B0VerificationReport {
-    pub baseline: &'static str,
     pub commit: String,
-    pub artifact_ok: bool,
     pub dag_ok: bool,
     pub cases: Vec<B0CaseResult>,
 }
 
 impl B0VerificationReport {
     pub fn all_ok(&self) -> bool {
-        self.artifact_ok
-            && self.dag_ok
-            && self.cases.len() == MATRIX_ROWS
-            && self.cases.iter().all(|case| case.ok)
+        self.dag_ok && self.cases.len() == MATRIX_ROWS && self.cases.iter().all(|case| case.ok)
     }
 }
 
 pub fn run_b0_matrix() -> B0VerificationReport {
     let cases = vec![
-        case_artifact_hash_lock(),
         case_frozen_crate_dag(),
         case_revision_monotonic(),
         case_pin_reclaim(),
@@ -82,19 +68,12 @@ pub fn run_b0_matrix() -> B0VerificationReport {
         case_port_schema_intern(),
         case_deterministic_executor(),
     ];
-    let artifact_ok = cases.first().is_some_and(|c| c.ok);
-    let dag_ok = cases.get(1).is_some_and(|c| c.ok);
+    let dag_ok = cases.first().is_some_and(|c| c.ok);
     B0VerificationReport {
-        baseline: BASELINE_ID,
         commit: git_head(),
-        artifact_ok,
         dag_ok,
         cases,
     }
-}
-
-pub fn case_artifact_hash_lock() -> B0CaseResult {
-    wrap("1", "artifact hash lock", artifact_hash_lock)
 }
 
 pub fn case_frozen_crate_dag() -> B0CaseResult {
@@ -142,11 +121,7 @@ pub fn case_dual_voxel_world() -> B0CaseResult {
 }
 
 pub fn case_port_schema_intern() -> B0CaseResult {
-    wrap(
-        "9",
-        "GeneratedVoxelWorldPortAdapter intern",
-        port_schema_intern,
-    )
+    wrap("9", "VoxelWorldPortAdapter intern", port_schema_intern)
 }
 
 pub fn case_deterministic_executor() -> B0CaseResult {
@@ -172,39 +147,6 @@ fn wrap(id: &'static str, name: &'static str, f: fn() -> Result<String, String>)
             detail,
         },
     }
-}
-
-fn artifact_hash_lock() -> Result<String, String> {
-    verify_artifact_hashes().map_err(|err| format!("verify_artifact_hashes: {err}"))?;
-    if BASELINE_ID != "LGE-V1.4-2026-08-27" {
-        return Err(format!("baseline {BASELINE_ID}"));
-    }
-    if SCHEMA_EPOCH != 1 {
-        return Err(format!("schemaEpoch {SCHEMA_EPOCH}"));
-    }
-    require_schema("voxel-world-port")?;
-    require_schema(legacy_baseline::SECTION_PAGE_SCHEMA_ID)?;
-    require_schema(REVISION_STAMP_SCHEMA)?;
-    if SECTION_PRESENCE.len() != 4 {
-        return Err(format!("SECTION_PRESENCE len {}", SECTION_PRESENCE.len()));
-    }
-    if STABLE_ERROR_IDS.is_empty() || BINDINGS.is_empty() {
-        return Err("STABLE_ERROR_IDS / BINDINGS empty".into());
-    }
-    let root = workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
-    let lock_json = std::fs::read_to_string(root.join(generated_clean::LOCK_PATH))
-        .map_err(|err| format!("read generated-lock: {err}"))?;
-    let locked = generated_clean::lock_from_json(&lock_json);
-    let generated = generated_clean::workspace_generated_dir(&root);
-    let dirty = generated_clean::violations(&generated, &locked);
-    if !dirty.is_empty() {
-        return Err(format!("generated_clean: {dirty:?}"));
-    }
-    Ok(format!(
-        "verify_artifact_hashes Ok; generated_clean empty; SCHEMA_IDS={} BINDINGS={}",
-        SCHEMA_IDS.len(),
-        BINDINGS.len()
-    ))
 }
 
 fn frozen_crate_dag() -> Result<String, String> {
@@ -250,7 +192,6 @@ fn revision_monotonic() -> Result<String, String> {
         .finalize()
         .err()
         .ok_or_else(|| "abandoned reservation finalized".to_string())?;
-    require_stable(hole_err.error_id())?;
     if hole_err.error_id() != "InvalidHandle" {
         return Err(format!("abandon error {}", hole_err.error_id()));
     }
@@ -273,7 +214,6 @@ fn revision_monotonic() -> Result<String, String> {
         .finalize()
         .err()
         .ok_or_else(|| "double finalize succeeded".to_string())?;
-    require_stable(double.error_id())?;
     if double.error_id() != "HandleDoubleRelease" {
         return Err(format!("double finalize {}", double.error_id()));
     }
@@ -307,7 +247,6 @@ fn pin_reclaim() -> Result<String, String> {
         .try_pin(stamp.clone())
         .err()
         .ok_or_else(|| "second pin at capacity succeeded".to_string())?;
-    require_stable(over.error_id())?;
     if over.error_id() != "BudgetExceeded" {
         return Err(format!("capacity error {}", over.error_id()));
     }
@@ -366,7 +305,6 @@ fn section_four_state() -> Result<String, String> {
         .try_convert("Ready", None)
         .err()
         .ok_or_else(|| "Unavailable -> Ready succeeded".to_string())?;
-    require_stable(err.error_id())?;
     if err.error_id() != vw::SECTION_UNAVAILABLE {
         return Err(format!("illegal convert {}", err.error_id()));
     }
@@ -396,7 +334,6 @@ fn section_four_state() -> Result<String, String> {
 }
 
 fn dirty_frontier_pure() -> Result<String, String> {
-    require_schema("voxel-durability-ack")?;
     let frontier = DirtyFrontier::new("world-b0-dirty", 7)
         .map_err(|err| format!("new frontier: {}", err.error_id()))?;
     let dirty = frontier
@@ -616,25 +553,19 @@ fn dual_voxel_world() -> Result<String, String> {
 }
 
 fn port_schema_intern() -> Result<String, String> {
-    let interned_schema = intern_schema("voxel-world-port")?;
-    let interned_binding = BINDINGS
-        .iter()
-        .find(|binding| {
-            binding.schema_id == "voxel-world-port" && binding.rust_type == "VoxelWorldPort"
-        })
-        .map(|binding| binding.rust_type)
-        .ok_or_else(|| "BINDINGS missing VoxelWorldPort".to_string())?;
+    let interned_schema = PORT_SCHEMA;
+    let interned_binding = PORT_RUST_TYPE;
     let mut world = create_world("Authority", "ctx-b0-port", "world-b0-port", "b0-port")?;
-    let adapter = GeneratedVoxelWorldPortAdapter::new(&mut world);
+    let adapter = VoxelWorldPortAdapter::new(&mut world);
     if !std::ptr::eq(adapter.schema_id(), interned_schema) {
-        return Err("adapter.schema_id is not interned SCHEMA_IDS".into());
+        return Err("adapter.schema_id is not the interned PORT_SCHEMA".into());
     }
     let evidence = adapter.evidence();
     if !std::ptr::eq(evidence.schema_id, interned_schema) {
         return Err("PortEvidence.schema_id is not interned".into());
     }
     if !std::ptr::eq(evidence.binding_rust_type, interned_binding) {
-        return Err("PortEvidence.binding_rust_type is not interned BINDINGS".into());
+        return Err("PortEvidence.binding_rust_type is not the interned PORT_RUST_TYPE".into());
     }
     Ok(format!(
         "schema_id={interned_schema} binding={interned_binding}"
@@ -643,7 +574,7 @@ fn port_schema_intern() -> Result<String, String> {
 
 fn deterministic_two_seeds() -> Result<String, String> {
     let ops: Vec<_> = (0..32)
-        .map(|i| GeneratedVoxelOperation {
+        .map(|i| VoxelOperation {
             schema_id: "voxel-query",
             seq: i,
             payload: vec![i as u8, 7],
@@ -676,45 +607,15 @@ fn deterministic_two_seeds() -> Result<String, String> {
 }
 
 fn approved_snapshot(label: &str) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|gate| {
-            (
-                (*gate).to_string(),
-                hex32(&sha256(format!("approved-{gate}").as_bytes())),
-            )
-        })
-        .collect();
-    let evidence: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|gate| DecisionEvidence {
-            gate_id: (*gate).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*gate].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &evidence).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn create_world(
@@ -765,7 +666,7 @@ fn stamp_at(
     generation: u64,
     world_rev_n: u64,
     sections: &[(&str, u64)],
-) -> lumio_voxel_domain::revision::GeneratedRevisionStamp {
+) -> lumio_voxel_domain::revision::RevisionStamp {
     let world = world_rev(world_rev_n);
     let mut pairs = Vec::new();
     for (id, rev) in sections {
@@ -776,7 +677,7 @@ fn stamp_at(
         let mut reserved = section_alloc.reserve_section().unwrap();
         pairs.push((id.to_string(), reserved.finalize().unwrap()));
     }
-    to_generated_stamp(world_id, context_id, generation, world, &pairs)
+    to_revision_stamp(world_id, context_id, generation, world, &pairs)
 }
 
 fn payload(bytes: &[u8]) -> SectionPayload {
@@ -873,34 +774,12 @@ fn cut_identity(view: &PublishedReadView) -> Result<(), String> {
     }
 }
 
-fn intern_schema(id: &str) -> Result<&'static str, String> {
-    SCHEMA_IDS
-        .iter()
-        .copied()
-        .find(|item| *item == id)
-        .ok_or_else(|| format!("{id} missing from SCHEMA_IDS"))
-}
-
 fn intern_presence(name: &str) -> Result<&'static str, String> {
     SECTION_PRESENCE
         .iter()
         .copied()
         .find(|item| *item == name)
         .ok_or_else(|| format!("{name} missing from SECTION_PRESENCE"))
-}
-
-fn require_schema(id: &str) -> Result<(), String> {
-    intern_schema(id).map(|_| ())
-}
-
-fn require_stable(id: &str) -> Result<(), String> {
-    if is_stable_error_id(id) {
-        Ok(())
-    } else {
-        Err(format!(
-            "{id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-        ))
-    }
 }
 
 fn hex32(bytes: &[u8; 32]) -> String {

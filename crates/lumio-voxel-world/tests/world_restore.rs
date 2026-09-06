@@ -1,13 +1,12 @@
 //! R-00136: preflight + shadow root + atomic restore publish.
 
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, is_stable_error_id, sha256};
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::PublishedStateRoot;
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, REVISION_STAMP_SCHEMA, RevisionAllocator, WorldRevision,
+    REVISION_STAMP_SCHEMA, RevisionAllocator, RevisionStamp, WorldRevision,
 };
 use lumio_voxel_domain::section::{
     DirtyFrontier, SectionDeltaBuilder, SectionDirectoryBuilder, SectionPage, SectionPayload,
@@ -37,45 +36,15 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 fn approved_snapshot(label: &str) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|g| {
-            (
-                (*g).to_string(),
-                hex32(&sha256(format!("approved-{g}").as_bytes())),
-            )
-        })
-        .collect();
-    let ev: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|g| DecisionEvidence {
-            gate_id: (*g).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*g].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &ev).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn origin_of(world: &VoxelWorld, request_id: &str) -> OriginToken {
@@ -185,7 +154,7 @@ fn root_at(
         .insert("s:0:0:0", slot)
         .expect("canonical section id");
     let directory = builder.freeze();
-    let stamp = GeneratedRevisionStamp {
+    let stamp = RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: world_id.to_string(),
         context_id: context_id.to_string(),
@@ -245,13 +214,6 @@ fn publish_ready_section(world: &VoxelWorld) {
         .publication_authority()
         .publish_once(prepared.seal().expect("seal"))
         .expect("publish cut");
-}
-
-fn assert_stable_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
 }
 
 #[test]
@@ -342,7 +304,6 @@ fn preflight_rejects_truncated_empty_and_wrong_world_without_touching_world() {
     )
     .expect_err("empty");
     assert_eq!(empty.error_id(), "InvalidHandle");
-    assert_stable_error(empty.error_id());
 
     let truncated = RestorePreflight::validate(
         &bytes[..bytes.len() / 2],
@@ -352,7 +313,6 @@ fn preflight_rejects_truncated_empty_and_wrong_world_without_touching_world() {
     )
     .expect_err("truncated");
     assert_eq!(truncated.error_id(), "InvalidHandle");
-    assert_stable_error(truncated.error_id());
 
     let wrong_world = RestorePreflight::validate(
         &bytes,
@@ -362,7 +322,6 @@ fn preflight_rejects_truncated_empty_and_wrong_world_without_touching_world() {
     )
     .expect_err("wrong world");
     assert_eq!(wrong_world.error_id(), "SessionMismatch");
-    assert_stable_error(wrong_world.error_id());
 
     assert_eq!(identity_of(&world), before);
     let lease =
@@ -406,7 +365,6 @@ fn stale_generation_restore_keeps_old_identity() {
     let lifecycle_before = live.state_view().lifecycle();
     let err = restore(&mut live, candidate).expect_err("stale generation");
     assert_eq!(err.error_id(), "StaleEpoch");
-    assert_stable_error(err.error_id());
     assert_eq!(identity_of(&live), before);
     assert_eq!(live.state_view().lifecycle(), lifecycle_before);
     assert_eq!(
@@ -447,7 +405,6 @@ fn restore_and_mutation_occupancy_are_serial() {
             err.expect_err("already entered").error_id(),
             "InvalidHandle"
         );
-        assert_stable_error("HandleDoubleRelease");
     }
 
     restore(&mut world, candidate).expect("restore after mutation lease drop");
@@ -483,7 +440,6 @@ fn restore_rejected_when_not_running_leaves_identity() {
     let before = identity_of(&world);
     let err = restore(&mut world, candidate).expect_err("Ready is not write admissible");
     assert_eq!(err.error_id(), "ClaimNotGranted");
-    assert_stable_error(err.error_id());
     assert_eq!(identity_of(&world), before);
     assert_eq!(world.state_view().lifecycle(), "Ready");
 }
@@ -544,7 +500,6 @@ fn preflight_rejects_bad_schema_epoch_and_config_hash() {
     )
     .expect_err("schemaEpoch");
     assert_eq!(epoch_err.error_id(), "ManifestUnsupportedVersion");
-    assert_stable_error(epoch_err.error_id());
 
     let other = approved_snapshot("r00136-hash-other");
     let hash_err = RestorePreflight::validate(
@@ -555,7 +510,6 @@ fn preflight_rejects_bad_schema_epoch_and_config_hash() {
     )
     .expect_err("config hash");
     assert_eq!(hash_err.error_id(), "EvidenceDigestMismatch");
-    assert_stable_error(hash_err.error_id());
 
     assert_eq!(identity_of(&world), before);
 }

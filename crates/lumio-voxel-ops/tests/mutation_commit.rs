@@ -1,17 +1,15 @@
 //! R-00104: commit linearizes one PreparedMutation through publish_once.
 
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, SCHEMA_IDS, is_stable_error_id, sha256};
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_domain::block::{BlockId, CellOffset};
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::{
     PublicationAuthority, PublishedReadView, PublishedStateRoot,
 };
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, PinRegistry, REVISION_STAMP_SCHEMA, RevisionAllocator, WorldRevision,
-    to_generated_stamp,
+    PinRegistry, RevisionAllocator, RevisionStamp, WorldRevision, to_revision_stamp,
 };
 use lumio_voxel_domain::section::{
     DirtyFrontier, SectionDeltaBuilder, SectionDirectoryBuilder, SectionDirectoryRoot,
@@ -22,7 +20,6 @@ use lumio_voxel_ops::mutation::{
     LookupOutcome, MutationEntry, MutationRequest, ReceiptLedger, canonical_fingerprint, commit,
     prepare,
 };
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 fn hex32(bytes: &[u8; 32]) -> String {
@@ -36,45 +33,15 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 fn approved_snapshot(label: &str) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|g| {
-            (
-                (*g).to_string(),
-                hex32(&sha256(format!("approved-{g}").as_bytes())),
-            )
-        })
-        .collect();
-    let ev: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|g| DecisionEvidence {
-            gate_id: (*g).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*g].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &ev).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn world_rev(n: u64) -> WorldRevision {
@@ -92,7 +59,7 @@ fn stamp_at(
     generation: u64,
     world_rev_n: u64,
     sections: &[(&str, u64)],
-) -> GeneratedRevisionStamp {
+) -> RevisionStamp {
     let world = world_rev(world_rev_n);
     let mut pairs = Vec::new();
     for (id, rev) in sections {
@@ -103,7 +70,7 @@ fn stamp_at(
         let mut c = section_alloc.reserve_section().unwrap();
         pairs.push((id.to_string(), c.finalize().unwrap()));
     }
-    to_generated_stamp(world_id, context_id, generation, world, &pairs)
+    to_revision_stamp(world_id, context_id, generation, world, &pairs)
 }
 
 fn payload(bytes: &[u8]) -> SectionPayload {
@@ -191,13 +158,6 @@ fn hash_value(value: &str) -> u32 {
     u32::from_le_bytes(digest[..4].try_into().unwrap())
 }
 
-fn assert_stable_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
-}
-
 fn assert_consistent_cut(view: &PublishedReadView) {
     assert_eq!(view.stamp(), view.root().stamp());
     assert_eq!(view.directory(), view.root().directory());
@@ -214,7 +174,6 @@ fn empty_replacement(
 
 #[test]
 fn happy_path_prepare_then_commit_is_atomic_cut() {
-    assert!(SCHEMA_IDS.contains(&REVISION_STAMP_SCHEMA));
     let (auth, snap) = published_world("world-a", 1);
     let mut ledger = ReceiptLedger::from_approved_snapshot(snap, 4).unwrap();
     let before = auth.capture();
@@ -450,7 +409,6 @@ fn stale_base_fails_snapshot_base_mismatch_without_swap() {
 
     let err = commit(prepared, &auth, &mut ledger).unwrap_err();
     assert_eq!(err.error_id(), "SnapshotBaseMismatch");
-    assert_stable_error(err.error_id());
     assert_eq!(auth.capture().root().identity(), injected_hash);
     match ledger.lookup(&req).unwrap() {
         LookupOutcome::InFlight => {}
@@ -471,7 +429,6 @@ fn conflict_fingerprint_same_txn_does_not_swap() {
     let conflict = request("txn-1", "world-a", 1, 0, &[("s:0:0:0", "edit-b")]);
     let err = prepare(&conflict, &auth.capture(), &mut ledger).unwrap_err();
     assert_eq!(err.error_id(), "RevisionConflict");
-    assert_stable_error(err.error_id());
     assert_eq!(
         err.disposition(),
         Some(lumio_voxel_ops::mutation::ReplayDisposition::Conflict)

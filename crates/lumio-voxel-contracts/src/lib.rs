@@ -7,9 +7,10 @@
 //!
 //! [`plumbing`] 是契约无关的水管(SHA-256、Hash 链、有界缓冲),本仓自有实现。
 //!
-//! 死基线 `LGE-V1.4-2026-08-27` 的只读镜像(`generated/` 树)与它的 `legacy_baseline`
-//! 已按 [ADR 0014] 整体删除:生成源仓 `LumioGameEngineArchitecture` 不存在、镜像永远无法
-//! 重新生成,且它用 `Chunk` 指代 16×16×16 的数据单元——按活契约,那个单元叫 Section。
+//! 旧合同制的那套东西——一份死基线的只读产物镜像(`generated/` 树)和它的
+//! `legacy_baseline`——已按 [ADR 0014] 整体删除:生成源仓早已不存在、镜像永远无法重新
+//! 生成,且它用 `Chunk` 指代 16×16×16 的数据单元,而按活契约那个单元叫 Section。
+//! 分层语义、字段、错误码一律只能从 [`voxel_world`] 取,不得再从任何镜像取。
 //!
 //! 本 crate 不得定义第二套 Schema 字段、ID 或序列化器。
 //!
@@ -26,11 +27,3 @@ pub use plumbing::{
 };
 
 pub const CRATE_NAME: &str = "lumio-voxel-contracts";
-
-/// `id` 是不是本工作区可以报出的稳定错误 id?
-///
-/// 唯一判定依据是活契约的 `errorCodes`。死基线镜像的 `STABLE_ERROR_IDS` 那一半随
-/// [ADR 0014] 的 `generated/` 树一起消失——错误 id 只剩契约这一套 snake_case 命名空间。
-pub fn is_stable_error_id(id: &str) -> bool {
-    voxel_world::is_error_code(id)
-}

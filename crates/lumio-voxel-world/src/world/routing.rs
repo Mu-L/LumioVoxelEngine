@@ -11,8 +11,8 @@ use super::write_lane::{WorldWriteLane, WriteLease};
 use lumio_voxel_ops::async_support::{
     CompletionDisposition, OriginEnvelope, OriginToken, validate_completion,
 };
-use lumio_voxel_ops::mutation::{GeneratedMutationReceipt, MutationRequest, PreparedMutation};
-use lumio_voxel_ops::query::{GeneratedVoxelQueryOutcome, GeneratedVoxelQueryRequest};
+use lumio_voxel_ops::mutation::{MutationReceipt, MutationRequest, PreparedMutation};
+use lumio_voxel_ops::query::{VoxelQueryOutcome, VoxelQueryRequest};
 use std::collections::BTreeMap;
 
 /// Routes admitted query / prepare / commit / abort through the serial write lane.
@@ -21,8 +21,8 @@ pub struct WorldRouter;
 impl WorldRouter {
     pub fn query(
         world: &mut VoxelWorld,
-        envelope: OriginEnvelope<GeneratedVoxelQueryRequest>,
-    ) -> Result<OriginEnvelope<GeneratedVoxelQueryOutcome>, WorldError> {
+        envelope: OriginEnvelope<VoxelQueryRequest>,
+    ) -> Result<OriginEnvelope<VoxelQueryOutcome>, WorldError> {
         check_config_hash(world, &envelope.config_hash)?;
         let origin = envelope.origin.clone();
         let admitted = world.endpoint().admit(WorldCommand::Query {
@@ -62,7 +62,7 @@ impl WorldRouter {
     pub fn commit(
         world: &mut VoxelWorld,
         envelope: OriginEnvelope<PreparedMutation>,
-    ) -> Result<OriginEnvelope<GeneratedMutationReceipt>, WorldError> {
+    ) -> Result<OriginEnvelope<MutationReceipt>, WorldError> {
         check_config_hash(world, &envelope.config_hash)?;
         require_accept(validate_completion(
             &expected_origin(world, envelope.origin.apply_phase())?,

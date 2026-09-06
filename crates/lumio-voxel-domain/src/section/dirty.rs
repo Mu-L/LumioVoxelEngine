@@ -5,7 +5,6 @@
 use super::SectionId;
 use crate::key::KeyRejection;
 use lumio_voxel_contracts::voxel_world as vw;
-use lumio_voxel_contracts::{SCHEMA_IDS, STABLE_ERROR_IDS};
 use std::collections::BTreeMap;
 
 const ACK_SCHEMA: &str = "voxel-durability-ack";
@@ -124,19 +123,19 @@ impl DirtyError {
 
     fn invalid_handle() -> Self {
         Self::InvalidHandle {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
         }
     }
 
     fn session_mismatch() -> Self {
         Self::SessionMismatch {
-            error_id: stable("SessionMismatch"),
+            error_id: "SessionMismatch",
         }
     }
 
     fn stale_epoch() -> Self {
         Self::StaleEpoch {
-            error_id: stable("StaleEpoch"),
+            error_id: "StaleEpoch",
         }
     }
 
@@ -181,14 +180,6 @@ impl std::fmt::Display for DirtyError {
 
 impl std::error::Error for DirtyError {}
 
-fn stable(id: &'static str) -> &'static str {
-    STABLE_ERROR_IDS
-        .iter()
-        .copied()
-        .find(|candidate| *candidate == id)
-        .expect("mapped error id must exist in the frozen mirror's STABLE_ERROR_IDS")
-}
-
 fn contract(id: &'static str) -> &'static str {
     vw::intern_error_code(id).expect("mapped error id must exist in the contract errorCodes")
 }
@@ -199,14 +190,6 @@ fn parse_section(raw: &str) -> Result<SectionId, DirtyError> {
         KeyRejection::SectionYOutOfRange => DirtyError::section_y_out_of_range(),
         _ => DirtyError::unknown_section_key(),
     })
-}
-
-fn ack_schema_id() -> &'static str {
-    SCHEMA_IDS
-        .iter()
-        .copied()
-        .find(|id| *id == ACK_SCHEMA)
-        .expect("voxel-durability-ack must exist in generated SCHEMA_IDS")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -222,7 +205,7 @@ impl DirtyFrontier {
         if world_id.is_empty() {
             return Err(DirtyError::invalid_handle());
         }
-        let _ = ack_schema_id();
+        let _ = ACK_SCHEMA;
         Ok(Self {
             world_id,
             generation,
@@ -287,7 +270,7 @@ impl DirtyFrontier {
 
     /// Pure coverage: does not clear entries. Wrong world/generation is a generated error.
     pub fn covered_by(&self, ack: &DurabilityAckEvidence) -> Result<DirtyCoverage, DirtyError> {
-        let _ = ack_schema_id();
+        let _ = ACK_SCHEMA;
         if ack.kind != ACK_KIND {
             return Err(DirtyError::invalid_handle());
         }

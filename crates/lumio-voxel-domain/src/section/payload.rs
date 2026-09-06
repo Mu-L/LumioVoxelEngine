@@ -1,18 +1,18 @@
 //! Immutable published section payload. Pages are sealed; no Storage pointers.
 
 use super::SectionError;
-use lumio_voxel_contracts::legacy_baseline;
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_contracts::voxel_world as vw;
-use lumio_voxel_contracts::{SCHEMA_IDS, sha256};
 use std::sync::Arc;
 
-/// 页 schema 在废弃基线里的 id。名字里的 `chunk` 是那份冻结产物的拼写,不是分层语义
-/// (见 `lumio_voxel_contracts::legacy_baseline`);Section 的页语义取自活契约。
-const SECTION_PAGE_SCHEMA: &str = legacy_baseline::SECTION_PAGE_SCHEMA_ID;
+/// 页 schema id。名字里的 `chunk` 是这份 schema 被冻结时的拼写,**不是**分层语义:
+/// 16×16×16 的数据单元按活契约叫 Section。该值进 `identity_bytes()` 的摘要,改动即改
+/// 已发布身份,故按 ADR 0013 原样保留;Section 的页语义仍只从活契约取。
+pub const SECTION_PAGE_SCHEMA: &str = "voxel-chunk-page";
 
-/// Generated page-encoding identities. Not Schema columns.
+/// Page-encoding identities. Not Schema columns.
 const PAGE_ENCODINGS: &[&str] = &["Dense", "Sparse"];
-/// Generated compression identities. Not a selected public default.
+/// Compression identities. Not a selected public default.
 const COMPRESSION_CODECS: &[&str] = &["None", "Zstd", "Lz4"];
 
 const V1_ENCODING: &str = "Dense";
@@ -119,11 +119,7 @@ impl SectionPayload {
         pages: impl IntoIterator<Item = SectionPage>,
         storage: Option<super::SectionStorage>,
     ) -> Result<Self, SectionError> {
-        let schema_id = SCHEMA_IDS
-            .iter()
-            .copied()
-            .find(|id| *id == SECTION_PAGE_SCHEMA)
-            .expect("the section page schema id must exist in the frozen mirror's SCHEMA_IDS");
+        let schema_id = SECTION_PAGE_SCHEMA;
         let mut sealed = Vec::new();
         for page in pages {
             sealed.push(DenseUncompressedAdapter::seal(page)?);

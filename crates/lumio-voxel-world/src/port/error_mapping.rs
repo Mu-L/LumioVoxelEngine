@@ -1,20 +1,18 @@
 //! Map World / Query / Mutation error ids onto interned stable identifiers.
 //!
-//! Two id namespaces reach this seam. Voxel world-data semantics report the live
-//! contract's codes (`voxel_world::VOXEL_WORLD_ERROR_CODES`), which pass through
-//! unchanged; engine-generic failures the voxel contract does not define still report
-//! the frozen mirror's `STABLE_ERROR_IDS`.
+//! 只有一套错误 id 命名空间:活契约的 `errorCodes`(`voxel_world::VOXEL_WORLD_ERROR_CODES`),
+//! 原样透传。契约不定义的引擎通用失败(句柄 / 会话 / 预算 / 队列)由本仓自行命名,仍然
+//! 可观测,但 [`PortError::is_registered`] 对它们返回 `false`——判定谓词只认契约。
 
 #![forbid(unsafe_code)]
 
 use crate::world::{WorldError, intern_stable};
-use lumio_voxel_contracts::is_stable_error_id;
 use lumio_voxel_contracts::voxel_world as vw;
 use lumio_voxel_ops::mutation::MutationError;
 use lumio_voxel_ops::query::QueryError;
 use std::borrow::Cow;
 
-/// Port-facing error. Known ids borrow the generated table; an id introduced by
+/// Port-facing error. Known ids borrow the contract table; an id introduced by
 /// an upstream producer is retained as an owned value instead of being disguised
 /// as an unrelated known error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +26,7 @@ impl PortError {
     }
 
     pub fn is_registered(&self) -> bool {
-        is_stable_error_id(self.error_id())
+        vw::is_error_code(self.error_id())
     }
 }
 
@@ -46,7 +44,7 @@ impl From<WorldError> for PortError {
     }
 }
 
-/// Exhaustive mapping of known generated ids. Unknown ids remain observable at
+/// Exhaustive mapping of known ids. Unknown ids remain observable at
 /// the Port boundary so callers cannot confuse a new producer error with
 /// `InvalidHandle`.
 pub fn map_internal_error(error_id: &str) -> PortError {

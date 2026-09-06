@@ -8,11 +8,9 @@ use super::barrier::{BarrierScope, admit_scope};
 use super::instance::VoxelWorld;
 use lumio_voxel_ops::async_support::OriginToken;
 use lumio_voxel_ops::mutation::{
-    GeneratedMutationReceipt, MutationError, MutationRequest, PreparedMutation, commit, prepare,
+    MutationError, MutationReceipt, MutationRequest, PreparedMutation, commit, prepare,
 };
-use lumio_voxel_ops::query::{
-    GeneratedVoxelQueryOutcome, GeneratedVoxelQueryRequest, QueryError, QueryExecutor,
-};
+use lumio_voxel_ops::query::{QueryError, QueryExecutor, VoxelQueryOutcome, VoxelQueryRequest};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -76,10 +74,7 @@ impl WriteLease<'_> {
         prepare(request, &view, self.world.ledger_mut()).map_err(map_mutation)
     }
 
-    pub fn commit(
-        &mut self,
-        prepared: PreparedMutation,
-    ) -> Result<GeneratedMutationReceipt, WorldError> {
+    pub fn commit(&mut self, prepared: PreparedMutation) -> Result<MutationReceipt, WorldError> {
         self.require_scope(BarrierScope::Mutation)?;
         let request = MutationRequest {
             txn_id: prepared.txn_id().to_string(),
@@ -105,10 +100,7 @@ impl WriteLease<'_> {
             .map_err(|err| WorldError::mapped(err.error_id()))
     }
 
-    pub fn query(
-        &mut self,
-        request: &GeneratedVoxelQueryRequest,
-    ) -> Result<GeneratedVoxelQueryOutcome, WorldError> {
+    pub fn query(&mut self, request: &VoxelQueryRequest) -> Result<VoxelQueryOutcome, WorldError> {
         self.require_scope(BarrierScope::CaptureCut)?;
         re_admit_query(self.world, request)?;
         let snapshot = Arc::clone(&self.world.instance.snapshot);
@@ -143,10 +135,7 @@ fn re_admit_mutation(world: &mut VoxelWorld, request: &MutationRequest) -> Resul
     Ok(())
 }
 
-fn re_admit_query(
-    world: &mut VoxelWorld,
-    request: &GeneratedVoxelQueryRequest,
-) -> Result<(), WorldError> {
+fn re_admit_query(world: &mut VoxelWorld, request: &VoxelQueryRequest) -> Result<(), WorldError> {
     let origin = origin_for(world, &request.query_id)?;
     world.endpoint().admit(WorldCommand::Query {
         origin,

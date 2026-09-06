@@ -6,8 +6,7 @@ use super::prepared::{PreparedPublication, PublicationToken};
 use super::root::PublishedStateRoot;
 use super::{PublishError, map_pin};
 use crate::revision::{
-    GeneratedRevisionStamp, PinRegistry, REVISION_STAMP_SCHEMA, ReadViewLease, RevisionPin,
-    WorldRevision,
+    PinRegistry, REVISION_STAMP_SCHEMA, ReadViewLease, RevisionPin, RevisionStamp, WorldRevision,
 };
 use crate::section::{DirtyFrontier, SectionDirectoryRoot, SectionReplacement};
 use std::collections::BTreeSet;
@@ -180,7 +179,7 @@ impl PublishedReadView {
         &self.lease
     }
 
-    pub fn stamp(&self) -> &GeneratedRevisionStamp {
+    pub fn stamp(&self) -> &RevisionStamp {
         self.root.stamp()
     }
 
@@ -197,7 +196,7 @@ fn check_stamp(
     world_id: &str,
     context_id: &str,
     generation: u64,
-    stamp: &GeneratedRevisionStamp,
+    stamp: &RevisionStamp,
 ) -> Result<(), PublishError> {
     if stamp.schema_id != REVISION_STAMP_SCHEMA {
         return Err(PublishError::invalid_handle());

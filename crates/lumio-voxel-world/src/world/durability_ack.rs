@@ -8,7 +8,6 @@
 use super::WorldError;
 use super::barrier::{BarrierScope, admit_scope};
 use super::instance::VoxelWorld;
-use lumio_voxel_contracts::SCHEMA_IDS;
 use lumio_voxel_domain::publication::PublishedStateRoot;
 use lumio_voxel_domain::revision::WorldRevision;
 use lumio_voxel_domain::section::{DurabilityAckEvidence, SectionDeltaBuilder};
@@ -46,7 +45,7 @@ pub fn apply_durability_ack(
     world: &mut VoxelWorld,
     ack: AckEvidence,
 ) -> Result<DurabilityReceipt, WorldError> {
-    let _ = ack_schema_id();
+    let _ = ACK_SCHEMA;
     validate_before_occupancy(world, &ack)?;
     let mut barrier = DurabilityAckBarrier::acquire(world)?;
     barrier.enter()?;
@@ -152,12 +151,4 @@ fn validate_before_occupancy(world: &VoxelWorld, ack: &AckEvidence) -> Result<()
 
 fn world_revision_matching(n: u64) -> Result<WorldRevision, WorldError> {
     Ok(WorldRevision::from_raw(n))
-}
-
-fn ack_schema_id() -> &'static str {
-    SCHEMA_IDS
-        .iter()
-        .copied()
-        .find(|id| *id == ACK_SCHEMA)
-        .expect("voxel-durability-ack must exist in generated SCHEMA_IDS")
 }

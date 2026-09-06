@@ -78,9 +78,14 @@ Section 的层号取值 0~15 恰好 4 bit。
 
 体素公共语义报活契约 `errorCodes` 里的 snake_case 码:`unknown_section_key` / `unknown_chunk_key` /
 `section_y_out_of_range` / `coordinate_out_of_bounds` / `section_unavailable` / `stale_section_revision` /
-`dirty_section_not_durable` / `section_digest_mismatch` 等。契约不定义的引擎通用失败(`InvalidHandle`、
-`SessionMismatch`、`StaleEpoch`、`BudgetExceeded`……)仍报废弃镜像的 `STABLE_ERROR_IDS`。
-两个命名空间由 `lumio_voxel_contracts::is_stable_error_id` 一个谓词收口,调用方不必知道来自哪边。
+`dirty_section_not_durable` / `section_digest_mismatch` 等。**判定一个 id 是不是稳定错误 id,唯一谓词是
+`lumio_voxel_contracts::voxel_world::is_error_code`,它只认活契约的 `errorCodes`。**
+
+契约不定义的引擎通用失败(`InvalidHandle`、`SessionMismatch`、`StaleEpoch`、`BudgetExceeded`、
+`QueueFull`、`RevisionConflict`……)由本仓自行命名,原样报出、仍然可观测,但那个谓词对它们返回
+`false`——`PortError::is_registered()` 同理。旧合同制那份镜像的 `STABLE_ERROR_IDS` 已随
+[0014](../../decisions/0014-exit-legacy-baseline-contract-regime.md) 删除,仓里不再有第二张表可以对照;
+要让这类失败重新被判为稳定,只有一条路:回架构仓在活契约 `errorCodes` 里补。
 
 ### 契约来源怎么保证不漂
 
@@ -104,7 +109,8 @@ Section 的层号取值 0~15 恰好 4 bit。
 ## 相关
 
 - 决策:[0013](../../decisions/0013-voxel-world-contract-and-section-rename.md)(改从活契约取)、
-  [0014](../../decisions/0014-exit-legacy-baseline-contract-regime.md)(退出旧合同制,删镜像与 legacy_baseline)。
+  [0014](../../decisions/0014-exit-legacy-baseline-contract-regime.md)(退出旧合同制,删镜像与 legacy_baseline;
+  它延续 0013,不取代 0013)。
 - 代码:`crates/lumio-voxel-domain/src/key.rs`、`crates/lumio-voxel-domain/src/section/`、
   `crates/lumio-voxel-contracts/src/voxel_world.rs`。
 - 测试:`crates/lumio-voxel-domain/tests/section_chunk_keys.rs`、

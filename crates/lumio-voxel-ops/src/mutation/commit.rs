@@ -3,19 +3,19 @@
 #![forbid(unsafe_code)]
 
 use super::commit_finalize::publish_once_and_finalize;
-use super::fingerprint::{MUTATION_RECEIPT_SCHEMA, MutationRequest};
+use super::fingerprint::MutationRequest;
 use super::plan::MutationPlanner;
 use super::preconditions::MutationError;
 use super::prepared_token::PreparedMutation;
 use super::receipt_ledger::{LookupOutcome, ReceiptEvidence, ReceiptLedger};
 use crate::canonical::CanonicalObject;
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_contracts::voxel_world::SECTION_PRESENCE;
-use lumio_voxel_contracts::{SCHEMA_IDS, sha256};
 use lumio_voxel_domain::publication::{
     PublicationAuthority, PublishedReadView, PublishedStateRoot,
 };
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, SectionRevision, WorldRevision, to_generated_stamp,
+    RevisionStamp, SectionRevision, WorldRevision, to_revision_stamp,
 };
 use lumio_voxel_domain::section::{
     SectionDirectoryBuilder, SectionDirectoryRoot, SectionError, SectionReplacement,
@@ -31,7 +31,7 @@ pub struct CommitEvidence {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GeneratedMutationReceipt {
+pub struct MutationReceipt {
     pub txn_id: String,
     pub receipt: Vec<u8>,
     pub evidence: CommitEvidence,
@@ -42,8 +42,7 @@ pub fn commit(
     prepared: PreparedMutation,
     authority: &PublicationAuthority,
     ledger: &mut ReceiptLedger,
-) -> Result<GeneratedMutationReceipt, MutationError> {
-    debug_assert!(SCHEMA_IDS.contains(&MUTATION_RECEIPT_SCHEMA));
+) -> Result<MutationReceipt, MutationError> {
     // Idempotent replay must not require the unpublished base. Lookup first.
     match ledger
         .lookup(prepared.request())
@@ -106,7 +105,7 @@ pub fn commit(
             new_root: evidence.new_root,
         },
     );
-    Ok(GeneratedMutationReceipt {
+    Ok(MutationReceipt {
         txn_id,
         receipt,
         evidence,
@@ -142,14 +141,14 @@ fn recheck_prepared(
 fn duplicate_receipt(
     prepared: &PreparedMutation,
     receipt: Vec<u8>,
-) -> Result<GeneratedMutationReceipt, MutationError> {
+) -> Result<MutationReceipt, MutationError> {
     let txn_id = prepared.txn_id().to_string();
     let (old_root, new_root) = prepared
         .replay_evidence()
         .map(|evidence| (evidence.old_root, evidence.new_root))
         .unwrap_or_else(|| (prepared.base_identity(), prepared.base_identity()));
     let receipt_hash = sha256(&receipt);
-    Ok(GeneratedMutationReceipt {
+    Ok(MutationReceipt {
         txn_id: txn_id.clone(),
         receipt,
         evidence: CommitEvidence {
@@ -211,7 +210,7 @@ fn build_stamp(
     view: &PublishedReadView,
     replacement: &SectionReplacement,
     overlay_ids: &BTreeSet<String>,
-) -> Result<GeneratedRevisionStamp, MutationError> {
+) -> Result<RevisionStamp, MutationError> {
     let stamp = view.stamp();
     let mut pairs = Vec::new();
     for id in overlay_ids {
@@ -233,7 +232,7 @@ fn build_stamp(
         };
         pairs.push((id.clone(), section_revision(rev_n)?));
     }
-    Ok(to_generated_stamp(
+    Ok(to_revision_stamp(
         stamp.world_id.clone(),
         stamp.context_id.clone(),
         stamp.generation,

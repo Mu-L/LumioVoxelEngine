@@ -5,9 +5,8 @@
 
 #![forbid(unsafe_code)]
 
-use super::stamp::{GeneratedRevisionStamp, REVISION_STAMP_SCHEMA};
+use super::stamp::{REVISION_STAMP_SCHEMA, RevisionStamp};
 use crate::config_snapshot::VoxelConfigSnapshot;
-use lumio_voxel_contracts::{SCHEMA_IDS, STABLE_ERROR_IDS};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -26,13 +25,13 @@ impl PinError {
 
     fn invalid() -> Self {
         Self::InvalidHandle {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
         }
     }
 
     fn budget() -> Self {
         Self::BudgetExceeded {
-            error_id: stable("BudgetExceeded"),
+            error_id: "BudgetExceeded",
         }
     }
 }
@@ -45,13 +44,8 @@ impl std::fmt::Display for PinError {
 
 impl std::error::Error for PinError {}
 
-fn stable(id: &'static str) -> &'static str {
-    debug_assert!(STABLE_ERROR_IDS.contains(&id));
-    id
-}
-
 pub(crate) struct LivePin {
-    pub(crate) stamp: GeneratedRevisionStamp,
+    pub(crate) stamp: RevisionStamp,
     refs: usize,
 }
 
@@ -85,7 +79,6 @@ impl PinRegistry {
         context_id: impl Into<String>,
         generation: u64,
     ) -> Self {
-        debug_assert!(SCHEMA_IDS.contains(&REVISION_STAMP_SCHEMA));
         Self {
             snapshot,
             inner: Arc::new(Mutex::new(RegistryState {
@@ -107,7 +100,7 @@ impl PinRegistry {
         lock_registry(&self.inner).destroyed = true;
     }
 
-    pub fn try_pin(&self, stamp: GeneratedRevisionStamp) -> Result<RevisionPin, PinError> {
+    pub fn try_pin(&self, stamp: RevisionStamp) -> Result<RevisionPin, PinError> {
         let mut inner = lock_registry(&self.inner);
         if inner.destroyed {
             return Err(PinError::invalid());
@@ -145,13 +138,13 @@ impl PinRegistry {
 
 /// Holds the exact stamp captured at `try_pin`. Clone/drop do not publish.
 pub struct RevisionPin {
-    stamp: GeneratedRevisionStamp,
+    stamp: RevisionStamp,
     id: u64,
     inner: Arc<Mutex<RegistryState>>,
 }
 
 impl RevisionPin {
-    pub fn stamp(&self) -> &GeneratedRevisionStamp {
+    pub fn stamp(&self) -> &RevisionStamp {
         &self.stamp
     }
 }

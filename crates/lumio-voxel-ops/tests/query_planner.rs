@@ -1,22 +1,21 @@
 //! R-00080: deterministic query planner and adapter-internal budget admission.
 
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_contracts::voxel_world as vw;
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, SCHEMA_IDS, is_stable_error_id, sha256};
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::{
     PublicationAuthority, PublishedReadView, PublishedStateRoot,
 };
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, PinRegistry, REVISION_STAMP_SCHEMA, RevisionAllocator, WorldRevision,
+    PinRegistry, REVISION_STAMP_SCHEMA, RevisionAllocator, RevisionStamp, WorldRevision,
 };
 use lumio_voxel_domain::section::{
     DirtyFrontier, SectionDeltaBuilder, SectionDirectoryBuilder, SectionPage, SectionPayload,
     SectionSlot,
 };
-use lumio_voxel_ops::query::{GeneratedVoxelQueryRequest, QUERY_SCHEMA, QueryPlanner};
+use lumio_voxel_ops::query::{QUERY_SCHEMA, QueryPlanner, VoxelQueryRequest};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -33,46 +32,16 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 fn approved_snapshot(label: &str, capabilities: &[&str]) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|g| {
-            (
-                (*g).to_string(),
-                hex32(&sha256(format!("approved-{g}").as_bytes())),
-            )
-        })
-        .collect();
-    let ev: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|g| DecisionEvidence {
-            gate_id: (*g).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*g].clone(),
-        })
-        .collect();
     let names: Vec<String> = capabilities.iter().map(|s| (*s).to_string()).collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(names.clone()),
+        host_capability: HostCapabilitySet::from_names(names.clone()),
         start_capabilities: names,
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &ev).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn world_rev(n: u64) -> WorldRevision {
@@ -84,13 +53,8 @@ fn world_rev(n: u64) -> WorldRevision {
     reserved.finalize().unwrap()
 }
 
-fn stamp(
-    world_id: &str,
-    context: &str,
-    generation: u64,
-    world_revision: u64,
-) -> GeneratedRevisionStamp {
-    GeneratedRevisionStamp {
+fn stamp(world_id: &str, context: &str, generation: u64, world_revision: u64) -> RevisionStamp {
+    RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: world_id.to_string(),
         context_id: context.to_string(),
@@ -150,8 +114,8 @@ fn authority(
         .expect("initial root matches authority")
 }
 
-fn request(sections: &[&str], cancel: bool) -> GeneratedVoxelQueryRequest {
-    GeneratedVoxelQueryRequest {
+fn request(sections: &[&str], cancel: bool) -> VoxelQueryRequest {
+    VoxelQueryRequest {
         query_id: "q-1".to_string(),
         world_id: "world-a".to_string(),
         context: "ctx-1".to_string(),
@@ -160,20 +124,12 @@ fn request(sections: &[&str], cancel: bool) -> GeneratedVoxelQueryRequest {
     }
 }
 
-fn assert_stable_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
-}
-
 fn stamp_debug_hash(view: &PublishedReadView) -> [u8; 32] {
     sha256(format!("{:?}", view.stamp()).as_bytes())
 }
 
 #[test]
 fn permutation_independent_plan_hash_and_captured_identities() {
-    assert!(SCHEMA_IDS.contains(&QUERY_SCHEMA));
     assert_eq!(QUERY_SCHEMA, "voxel-query");
 
     let snap = approved_snapshot("r00080-perm", &["Native", "ReferenceVoxel"]);
@@ -244,7 +200,6 @@ fn over_max_sections_is_budget_exceeded_without_touching_dummy_root() {
         )
         .expect_err("over max_sections");
     assert_eq!(err.error_id(), "BudgetExceeded");
-    assert_stable_error(err.error_id());
 
     assert_eq!(stamp_debug_hash(&view), stamp_before);
     assert_eq!(view.root().identity(), root_before);
@@ -343,7 +298,6 @@ fn cancel_before_plan_is_generated_error_without_io() {
         .plan(&request(&["s:0:0:0"], true), &view, snap.as_ref())
         .expect_err("cancel-before-plan");
     assert_eq!(err.error_id(), "InvalidHandle");
-    assert_stable_error(err.error_id());
     assert_eq!(stamp_debug_hash(&view), stamp_before);
 }
 
@@ -374,7 +328,6 @@ fn illegal_section_id_is_coordinate_out_of_bounds() {
             .plan(&request(&[bad], false), &view, snap.as_ref())
             .expect_err(bad);
         assert_eq!(err.error_id(), vw::UNKNOWN_SECTION_KEY, "id {bad}");
-        assert_stable_error(err.error_id());
     }
     // 旧式三坐标 c: 键与越界坐标各有各的契约错误码。
     for (bad, expected) in [
@@ -386,7 +339,6 @@ fn illegal_section_id_is_coordinate_out_of_bounds() {
             .plan(&request(&[bad], false), &view, snap.as_ref())
             .expect_err(bad);
         assert_eq!(err.error_id(), expected, "id {bad}");
-        assert_stable_error(err.error_id());
     }
 }
 
@@ -406,5 +358,4 @@ fn disabled_capability_is_claim_not_granted() {
         .plan(&request(&["s:0:0:0"], false), &view, snap.as_ref())
         .expect_err("disabled capability");
     assert_eq!(err.error_id(), "ClaimNotGranted");
-    assert_stable_error(err.error_id());
 }

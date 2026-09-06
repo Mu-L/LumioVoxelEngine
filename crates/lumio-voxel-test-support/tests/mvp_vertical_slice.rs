@@ -1,6 +1,5 @@
 //! R-00146: V1.4 MVP vertical slice via generated voxel-world-port.
 
-use lumio_voxel_contracts::BASELINE_ID;
 use lumio_voxel_test_support::b0_harness::{B0VerificationReport, run_b0_matrix};
 use lumio_voxel_test_support::b2_harness::{B2VerificationReport, run_b2_matrix};
 use lumio_voxel_test_support::mvp_harness::{
@@ -19,8 +18,6 @@ fn b0_and_b2_matrix_entry_points_typecheck() {
 #[test]
 fn mvp_vertical_slice_step_count_and_dual_instance() {
     let report = run_mvp_vertical_slice();
-    assert_eq!(report.baseline, BASELINE_ID);
-    assert_eq!(report.baseline, "LGE-V1.4-2026-08-27");
     assert_eq!(report.steps.len(), STEP_COUNT);
     assert_eq!(STEP_COUNT, 10);
     let names: Vec<_> = report.steps.iter().map(|step| step.name).collect();

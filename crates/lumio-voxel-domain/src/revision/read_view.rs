@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use super::pin::RevisionPin;
-use super::stamp::GeneratedRevisionStamp;
+use super::stamp::RevisionStamp;
 
 /// Immutable read lease. Concurrent commit or config reload cannot mix cuts.
 #[derive(Clone, Debug)]
@@ -16,7 +16,7 @@ impl ReadViewLease {
         Self { pin }
     }
 
-    pub fn stamp(&self) -> &GeneratedRevisionStamp {
+    pub fn stamp(&self) -> &RevisionStamp {
         self.pin.stamp()
     }
 }

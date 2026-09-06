@@ -33,12 +33,12 @@
 | [0003](0003-dependency-graphs-and-layering.md) | 用三张图描述依赖，逻辑模块不必等于 crate | 生效 |
 | [0004](0004-snapshot-short-barrier-vs-quiesce.md) | 运行中 Snapshot 只在短 Barrier 固定 Cut，Quiesce 才停写 | 生效 |
 | [0005](0005-origin-token-and-queue-matrix.md) | 异步任务携带完整 Origin Token，队列按矩阵声明 | 生效 |
-| [0006](0006-crate-map.md) | 按分层合并 crate，不按逻辑模块开仓 | 生效 |
+| [0006](0006-crate-map.md) | 按分层合并 crate，不按逻辑模块开仓 | 生效(crate 清单被 [0014](0014-exit-legacy-baseline-contract-regime.md) 部分取代) |
 | [0007](0007-v1.4-implementation-baseline.md) | 采用 LGE-V1.4 作为实现基线 | 被 [0014](0014-exit-legacy-baseline-contract-regime.md) 取代 |
 | [0008](0008-interned-contract-tables-as-static.md) | 三张 interned 契约表以 `static` 而非 `const` 再导出 | 生效 |
 | [0009](0009-consume-adr-040-041-artifacts.md) | 随镜像同步消费上游已发布的 ADR-040 / ADR-041 产物 | 被 [0014](0014-exit-legacy-baseline-contract-regime.md) 取代 |
 | [0010](0010-generated-clean-keeps-its-own-sha256.md) | generated-clean 守卫保留自己的 SHA-256，不复用被审计树内的实现 | 被 [0014](0014-exit-legacy-baseline-contract-regime.md) 取代 |
 | [0011](0011-voxel-local-canonical-object-encoding.md) | Voxel 自持类型化 canonical 对象编码，不再经上游 `canonical_object_pairs` | 生效 |
 | [0012](0012-canonical-decode-cost-and-refusal-naming.md) | Canonical 解码按输入长度线性收费，长度上限与拒绝命名都不落本库 | 生效 |
-| [0013](0013-voxel-world-contract-and-section-rename.md) | 体素公共语义改从 `voxel-world-v1.json` 取，16³ 数据单元改名 Section | 被 [0014](0014-exit-legacy-baseline-contract-regime.md) 取代 |
+| [0013](0013-voxel-world-contract-and-section-rename.md) | 体素公共语义改从 `voxel-world-v1.json` 取，16³ 数据单元改名 Section | 生效 |
 | [0014](0014-exit-legacy-baseline-contract-regime.md) | 退出旧合同制：删复印件与 CI 校对、删 generated 树与 legacy_baseline，公共语义只从活契约取 | 生效 |

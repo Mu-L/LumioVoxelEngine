@@ -8,14 +8,14 @@ use super::barrier::BarrierScope;
 use super::capture_admission::RuntimeSnapshotCut;
 use super::instance::VoxelWorld;
 use super::write_lane::WorldWriteLane;
-use lumio_voxel_domain::revision::GeneratedRevisionStamp;
+use lumio_voxel_domain::revision::RevisionStamp;
 use lumio_voxel_ops::snapshot::{CutEvidence, PinOrLease, VoxelCaptureRef};
 
 /// Evidence that a CaptureCut barrier captured one published root and released occupancy.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CaptureEvidence {
     pub cut_id: String,
-    pub voxel_stamp: GeneratedRevisionStamp,
+    pub voxel_stamp: RevisionStamp,
     pub root_hash: [u8; 32],
     pub barrier_released: bool,
 }

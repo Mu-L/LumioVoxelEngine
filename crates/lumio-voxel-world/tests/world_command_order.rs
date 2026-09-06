@@ -1,9 +1,8 @@
 //! R-00119: per-World command linearization and completion fencing.
 
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, is_stable_error_id, sha256};
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_ops::async_support::{
     CompletionDisposition, OriginEnvelope, OriginToken, validate_completion,
@@ -27,45 +26,15 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 fn approved_snapshot(label: &str) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|g| {
-            (
-                (*g).to_string(),
-                hex32(&sha256(format!("approved-{g}").as_bytes())),
-            )
-        })
-        .collect();
-    let ev: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|g| DecisionEvidence {
-            gate_id: (*g).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*g].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &ev).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn origin_of(world: &VoxelWorld, request_id: &str) -> OriginToken {
@@ -157,18 +126,11 @@ fn mutation_envelope(
     }
 }
 
-fn assert_stable_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
-}
-
 fn prepare_and_commit(
     world: &mut VoxelWorld,
     txn_id: &str,
     world_revision: u64,
-) -> OriginEnvelope<lumio_voxel_ops::mutation::GeneratedMutationReceipt> {
+) -> OriginEnvelope<lumio_voxel_ops::mutation::MutationReceipt> {
     let env = mutation_envelope(world, txn_id, world_revision);
     let prepared = WorldRouter::prepare(world, env)
         .unwrap_or_else(|err| panic!("prepare {txn_id}: {}", err.error_id()));
@@ -283,7 +245,6 @@ fn stale_or_wrong_generation_completion_does_not_publish() {
     )
     .expect_err("stale completion must not publish");
     assert_eq!(err.error_id(), "StaleEpoch");
-    assert_stable_error(err.error_id());
     assert_eq!(identity_of(&world), before);
 
     let wrong_ctx_env = mutation_envelope(&world, "txn-wrong-ctx", 0);
@@ -317,7 +278,6 @@ fn stale_or_wrong_generation_completion_does_not_publish() {
     )
     .expect_err("wrong world must not publish");
     assert_eq!(err.error_id(), "SessionMismatch");
-    assert_stable_error(err.error_id());
     assert_eq!(identity_of(&world), before);
 
     let wrong_gen_env = mutation_envelope(&world, "txn-wrong-gen", 0);
@@ -351,6 +311,5 @@ fn stale_or_wrong_generation_completion_does_not_publish() {
     )
     .expect_err("wrong generation must not publish");
     assert_eq!(err.error_id(), "SessionMismatch");
-    assert_stable_error(err.error_id());
     assert_eq!(identity_of(&world), before);
 }

@@ -1,9 +1,8 @@
 //! R-00068: OriginToken, bounded port from approved snapshot, completion dispositions.
 
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, SCHEMA_IDS, STABLE_ERROR_IDS, sha256};
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_ops::async_support::{
     APPLY_PHASES, BoundedJobPort, CompletionDisposition, OriginEnvelope, OriginToken,
@@ -11,7 +10,7 @@ use lumio_voxel_ops::async_support::{
 };
 use lumio_voxel_test_support::deterministic_executor::{DeterministicExecutor, Schedule};
 use lumio_voxel_test_support::fault_injection::{FaultInjector, FaultPoint};
-use lumio_voxel_test_support::reference_harness::GeneratedVoxelOperation;
+use lumio_voxel_test_support::reference_harness::VoxelOperation;
 use std::collections::BTreeMap;
 
 fn hex32(bytes: &[u8; 32]) -> String {
@@ -25,45 +24,15 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 fn approved_snapshot() -> std::sync::Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|g| {
-            (
-                (*g).to_string(),
-                hex32(&sha256(format!("approved-{g}").as_bytes())),
-            )
-        })
-        .collect();
-    let ev: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|g| DecisionEvidence {
-            gate_id: (*g).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*g].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(b"r00068-approved")),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &ev).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn origin(
@@ -79,7 +48,6 @@ fn origin(
 #[test]
 fn origin_requires_generated_phase_and_nonempty_fields() {
     assert!(APPLY_PHASES.contains(&"VoxelCommit"));
-    assert!(SCHEMA_IDS.contains(&"voxel-revision-stamp"));
     assert!(OriginToken::try_new("", 1, "r", 0, BTreeMap::new(), "VoxelCommit").is_err());
     assert!(OriginToken::try_new("w", 1, "", 0, BTreeMap::new(), "VoxelCommit").is_err());
     assert!(OriginToken::try_new("w", 1, "r", 0, BTreeMap::new(), "NotAPhase").is_err());
@@ -92,7 +60,6 @@ fn port_from_approved_snapshot_is_bounded_queue_full() {
     let snap = approved_snapshot();
     let mut port = BoundedJobPort::from_approved_snapshot(snap.clone(), 1).unwrap();
     assert_eq!(full_load_action(), "QueueFull");
-    assert!(STABLE_ERROR_IDS.contains(&full_load_action()));
     let job = OriginEnvelope {
         origin: origin("world-a", 1, "req-1", 0, "VoxelCommit"),
         config_hash: snap.config_hash().to_string(),
@@ -228,7 +195,6 @@ fn injected_pre_publication_fault_leaves_the_port_reusable() {
     let err = submit_under_fault(&mut port, &mut injector, envelope(&snap, "req-1", 1))
         .expect_err("armed pre-publication fault must abort the submit");
     assert_eq!(err, "InvalidHandle");
-    assert!(STABLE_ERROR_IDS.contains(&err));
     assert!(FaultInjector::recoverable(FaultPoint::PrePublication));
 
     // Nothing was published, so the slot was never consumed.
@@ -248,7 +214,6 @@ fn injected_post_publication_fault_keeps_the_visible_write() {
     let err = submit_under_fault(&mut port, &mut injector, envelope(&snap, "req-1", 7))
         .expect_err("armed post-publication fault must report");
     assert_eq!(err, "PartialLoadRolledBack");
-    assert!(STABLE_ERROR_IDS.contains(&err));
     // An already-visible write is never recoverable and must not be undone.
     assert!(!FaultInjector::recoverable(FaultPoint::PostPublication));
 
@@ -278,7 +243,7 @@ fn deterministic_schedule_replays_identically_through_the_bounded_port() {
     let schedule = Schedule {
         seed: 7,
         ops: (0..4u64)
-            .map(|seq| GeneratedVoxelOperation {
+            .map(|seq| VoxelOperation {
                 schema_id: "voxel-revision-stamp",
                 seq,
                 payload: vec![seq as u8],

@@ -6,7 +6,7 @@ use super::WorldError;
 use super::admission::AdmittedCommand;
 use lumio_voxel_ops::async_support::OriginEnvelope;
 use lumio_voxel_ops::mutation::{MutationRequest, PreparedMutation};
-use lumio_voxel_ops::query::GeneratedVoxelQueryRequest;
+use lumio_voxel_ops::query::VoxelQueryRequest;
 
 pub(crate) struct RoutedCommand<T> {
     admitted: AdmittedCommand,
@@ -27,10 +27,10 @@ impl<T> RoutedCommand<T> {
     }
 }
 
-impl RoutedCommand<GeneratedVoxelQueryRequest> {
+impl RoutedCommand<VoxelQueryRequest> {
     pub(crate) fn query(
         admitted: AdmittedCommand,
-        envelope: OriginEnvelope<GeneratedVoxelQueryRequest>,
+        envelope: OriginEnvelope<VoxelQueryRequest>,
     ) -> Result<Self, WorldError> {
         match admitted {
             AdmittedCommand::Query => Ok(Self { admitted, envelope }),

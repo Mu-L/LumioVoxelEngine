@@ -1,7 +1,6 @@
 //! Completion envelope. Completions cannot publish.
 
 use super::origin::OriginToken;
-use lumio_voxel_contracts::STABLE_ERROR_IDS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompletionDisposition {
@@ -20,7 +19,6 @@ pub struct CompletionEnvelope<R> {
 }
 
 pub fn validate_completion(expected: &OriginToken, current: &OriginToken) -> CompletionDisposition {
-    let _ = STABLE_ERROR_IDS.contains(&"StaleEpoch");
     if expected.world_context_id() != current.world_context_id() {
         return CompletionDisposition::WrongWorld;
     }

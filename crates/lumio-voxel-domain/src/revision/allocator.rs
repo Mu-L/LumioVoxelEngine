@@ -2,8 +2,6 @@
 
 #![allow(dead_code)]
 
-use lumio_voxel_contracts::STABLE_ERROR_IDS;
-
 /// World and Section revision domains are separate generated integers (min 0).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WorldRevision(u64);
@@ -60,11 +58,6 @@ impl std::fmt::Display for RevisionError {
 
 impl std::error::Error for RevisionError {}
 
-fn stable(id: &'static str) -> &'static str {
-    debug_assert!(STABLE_ERROR_IDS.contains(&id));
-    id
-}
-
 #[derive(Debug)]
 pub struct RevisionReservation<T> {
     value: T,
@@ -80,12 +73,12 @@ impl<T: Copy> RevisionReservation<T> {
     pub fn finalize(&mut self) -> Result<T, RevisionError> {
         if self.abandoned {
             return Err(RevisionError::Abandoned {
-                error_id: stable("InvalidHandle"),
+                error_id: "InvalidHandle",
             });
         }
         if self.finalized {
             return Err(RevisionError::DoubleFinalize {
-                error_id: stable("HandleDoubleRelease"),
+                error_id: "HandleDoubleRelease",
             });
         }
         self.finalized = true;
@@ -120,7 +113,7 @@ impl RevisionAllocator {
     pub fn reserve_world(&mut self) -> Result<RevisionReservation<WorldRevision>, RevisionError> {
         let v = self.next_world;
         let next = v.checked_add(1).ok_or(RevisionError::Overflow {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
         })?;
         self.next_world = next;
         Ok(RevisionReservation {
@@ -135,7 +128,7 @@ impl RevisionAllocator {
     ) -> Result<RevisionReservation<SectionRevision>, RevisionError> {
         let v = self.next_section;
         let next = v.checked_add(1).ok_or(RevisionError::Overflow {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
         })?;
         self.next_section = next;
         Ok(RevisionReservation {

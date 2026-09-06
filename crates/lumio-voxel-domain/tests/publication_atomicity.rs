@@ -1,23 +1,20 @@
 //! R-00078: one atomic PublishedState root; capture never mixes cuts.
 
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, SCHEMA_IDS, is_stable_error_id, sha256};
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::{
     PublicationAuthority, PublishedReadView, PublishedStateRoot,
 };
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, PinRegistry, REVISION_STAMP_SCHEMA, RevisionAllocator, WorldRevision,
-    to_generated_stamp,
+    PinRegistry, RevisionAllocator, RevisionStamp, WorldRevision, to_revision_stamp,
 };
 use lumio_voxel_domain::section::{
     DirtyFrontier, SectionDeltaBuilder, SectionDirectoryBuilder, SectionDirectoryRoot, SectionPage,
     SectionPayload, SectionReplacement, SectionSlot,
 };
 use lumio_voxel_test_support::fault_injection::{FaultInjector, FaultPoint};
-use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
@@ -32,45 +29,15 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 fn approved_snapshot(label: &str) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|g| {
-            (
-                (*g).to_string(),
-                hex32(&sha256(format!("approved-{g}").as_bytes())),
-            )
-        })
-        .collect();
-    let ev: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|g| DecisionEvidence {
-            gate_id: (*g).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*g].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &ev).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn world_rev(n: u64) -> WorldRevision {
@@ -88,7 +55,7 @@ fn stamp_at(
     generation: u64,
     world_rev_n: u64,
     sections: &[(&str, u64)],
-) -> GeneratedRevisionStamp {
+) -> RevisionStamp {
     let world = world_rev(world_rev_n);
     let mut pairs = Vec::new();
     for (id, rev) in sections {
@@ -99,7 +66,7 @@ fn stamp_at(
         let mut c = section_alloc.reserve_section().unwrap();
         pairs.push((id.to_string(), c.finalize().unwrap()));
     }
-    to_generated_stamp(world_id, context_id, generation, world, &pairs)
+    to_revision_stamp(world_id, context_id, generation, world, &pairs)
 }
 
 fn payload(bytes: &[u8]) -> SectionPayload {
@@ -176,13 +143,6 @@ fn presence(view: &PublishedReadView) -> &str {
         .presence()
 }
 
-fn assert_stable_error(id: &str) {
-    assert!(
-        is_stable_error_id(id),
-        "error id {id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-    );
-}
-
 fn assert_send_sync<T: Send + Sync>() {}
 
 fn assert_consistent_cut(view: &PublishedReadView) {
@@ -199,7 +159,6 @@ fn assert_consistent_cut(view: &PublishedReadView) {
 
 #[test]
 fn publish_swaps_stamp_and_directory_together() {
-    assert!(SCHEMA_IDS.contains(&REVISION_STAMP_SCHEMA));
     assert_send_sync::<PublicationAuthority>();
     assert_send_sync::<PublishedReadView>();
     assert_send_sync::<PublishedStateRoot>();
@@ -297,7 +256,6 @@ fn stale_wrong_world_and_double_token_leave_root_hash_unchanged() {
 
     let stale_err = auth.publish_once(token_stale).unwrap_err();
     assert_eq!(stale_err.error_id(), "SnapshotBaseMismatch");
-    assert_stable_error(stale_err.error_id());
     assert_eq!(auth.capture().root().identity(), hash1);
 
     let other_initial = root_at("world-b", "ctx-2", 9, 0, SectionSlot::unchanged(), None);
@@ -319,7 +277,6 @@ fn stale_wrong_world_and_double_token_leave_root_hash_unchanged() {
     let foreign_token = foreign_prep.seal().expect("foreign seal");
     let wrong_world = auth.publish_once(foreign_token).unwrap_err();
     assert_eq!(wrong_world.error_id(), "SessionMismatch");
-    assert_stable_error(wrong_world.error_id());
     assert_eq!(auth.capture().root().identity(), hash1);
     assert_eq!(presence(&auth.capture()), "Ready");
     assert_eq!(other.capture().stamp().world_revision, 0);
@@ -344,7 +301,6 @@ fn stale_wrong_world_and_double_token_leave_root_hash_unchanged() {
     let gen_token = gen_prep.seal().expect("gen seal");
     let wrong_gen = auth.publish_once(gen_token).unwrap_err();
     assert_eq!(wrong_gen.error_id(), "StaleEpoch");
-    assert_stable_error(wrong_gen.error_id());
     assert_eq!(auth.capture().root().identity(), hash1);
 
     let mut double = auth
@@ -364,7 +320,6 @@ fn stale_wrong_world_and_double_token_leave_root_hash_unchanged() {
     let first_seal = double.seal().expect("first seal of this prepare");
     let reused = double.seal().unwrap_err();
     assert_eq!(reused.error_id(), "HandleDoubleRelease");
-    assert_stable_error(reused.error_id());
     assert_eq!(auth.capture().root().identity(), hash1);
     drop(first_seal);
     assert_eq!(auth.capture().root().identity(), hash1);
@@ -378,7 +333,6 @@ fn stale_wrong_world_and_double_token_leave_root_hash_unchanged() {
         )
         .unwrap_err();
     assert_eq!(rejected_prepare.error_id(), "SessionMismatch");
-    assert_stable_error(rejected_prepare.error_id());
     assert_eq!(auth.capture().root().identity(), hash1);
 }
 
@@ -499,7 +453,6 @@ fn seal_tokens_are_unique_and_used_ids_cannot_publish() {
 
     let stale = auth.publish_once(token_b).unwrap_err();
     assert_eq!(stale.error_id(), "SnapshotBaseMismatch");
-    assert_stable_error(stale.error_id());
     assert_eq!(auth.capture().root().identity(), hash1);
 
     let mut prep_c = auth
@@ -632,7 +585,6 @@ fn injected_pre_publication_fault_leaves_the_published_cut_untouched() {
     let err = publish_under_fault(&auth, &mut injector, world_rev(1), root, replacement)
         .expect_err("armed pre-publication fault must abort the cycle");
     assert_eq!(err, "InvalidHandle");
-    assert_stable_error(err);
     assert!(FaultInjector::recoverable(FaultPoint::PrePublication));
 
     // Nothing became visible: the old cut is still whole and still current.
@@ -665,7 +617,10 @@ fn injected_post_publication_fault_does_not_roll_the_visible_cut_back() {
         .expect("post-publication fault fires after the visible swap");
     // An already-visible write is never recoverable and must not be undone.
     assert!(!FaultInjector::recoverable(FaultPoint::PostPublication));
-    assert_stable_error(FaultInjector::error_id(FaultPoint::PostPublication));
+    assert_eq!(
+        FaultInjector::error_id(FaultPoint::PostPublication),
+        "PartialLoadRolledBack"
+    );
 
     let after = auth.capture();
     assert_consistent_cut(&after);

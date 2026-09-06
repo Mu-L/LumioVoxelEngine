@@ -3,16 +3,17 @@
 #![forbid(unsafe_code)]
 
 use super::decode::decode_canonical_object;
-use super::manifest_adapter::{SNAPSHOT_HEADER_SCHEMA, SNAPSHOT_PAYLOAD_SCHEMA};
-use super::{is_hash256, stable};
+use super::is_hash256;
+use super::manifest_adapter::{
+    SNAPSHOT_HEADER_SCHEMA, SNAPSHOT_MAGIC, SNAPSHOT_PAYLOAD_SCHEMA, SNAPSHOT_SCHEMA_EPOCH,
+};
 use crate::canonical::CanonicalObject;
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, SNAPSHOT_MAGIC};
 use lumio_voxel_domain::config_snapshot::VoxelConfigSnapshot;
 use std::collections::BTreeMap;
 
 const SECTION_REVISION_PREFIX: &str = "sectionRevision.";
 
-/// Stable restore/preflight error. `error_id` is interned from generated ids.
+/// Stable restore/preflight error.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RestoreError {
     error_id: &'static str,
@@ -25,44 +26,42 @@ impl RestoreError {
 
     pub(super) fn invalid_handle() -> Self {
         Self {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
         }
     }
 
     pub(super) fn artifact_digest_mismatch() -> Self {
         Self {
-            error_id: stable("ArtifactDigestMismatch"),
+            error_id: "ArtifactDigestMismatch",
         }
     }
 
     pub(super) fn evidence_digest_mismatch() -> Self {
         Self {
-            error_id: stable("EvidenceDigestMismatch"),
+            error_id: "EvidenceDigestMismatch",
         }
     }
 
     pub(super) fn manifest_unsupported_version() -> Self {
         Self {
-            error_id: stable("ManifestUnsupportedVersion"),
+            error_id: "ManifestUnsupportedVersion",
         }
     }
 
     pub(super) fn session_mismatch() -> Self {
         Self {
-            error_id: stable("SessionMismatch"),
+            error_id: "SessionMismatch",
         }
     }
 
     pub(super) fn stale_epoch() -> Self {
         Self {
-            error_id: stable("StaleEpoch"),
+            error_id: "StaleEpoch",
         }
     }
 
     pub(super) fn mapped(id: &'static str) -> Self {
-        Self {
-            error_id: stable(id),
-        }
+        Self { error_id: id }
     }
 }
 
@@ -126,15 +125,9 @@ impl RestorePreflight {
         expected_generation: u64,
         snapshot: &VoxelConfigSnapshot,
     ) -> Result<DecodedRestore, RestoreError> {
-        let _ = super::manifest_adapter::header_schema();
-        let _ = super::manifest_adapter::payload_schema();
         if expected_world_id.is_empty() {
             return Err(RestoreError::invalid_handle());
         }
-        if snapshot.baseline_id() != BASELINE_ID || snapshot.schema_epoch() != SCHEMA_EPOCH {
-            return Err(RestoreError::manifest_unsupported_version());
-        }
-
         // Decoded members are already unique: a canonical object is keyed by name and
         // `decode_canonical_object` rejects a repeat rather than keeping one of them.
         let fields = decode_canonical_object(bytes)?;
@@ -146,7 +139,7 @@ impl RestorePreflight {
         if schema_id != SNAPSHOT_PAYLOAD_SCHEMA
             || header_schema != SNAPSHOT_HEADER_SCHEMA
             || magic != SNAPSHOT_MAGIC
-            || schema_epoch != SCHEMA_EPOCH
+            || schema_epoch != SNAPSHOT_SCHEMA_EPOCH
         {
             return Err(RestoreError::manifest_unsupported_version());
         }

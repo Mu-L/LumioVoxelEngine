@@ -1,9 +1,8 @@
-//! Origin token wrapping generated voxelContext / revision / tick-phase names.
+//! Origin token wrapping voxelContext / revision / tick-phase names.
 
-use lumio_voxel_contracts::{SCHEMA_IDS, STABLE_ERROR_IDS};
 use std::collections::BTreeMap;
 
-/// Generated tick-phase names (tick-phase-contract.schema.json enum).
+/// Tick-phase names (tick-phase-contract enum).
 pub const APPLY_PHASES: &[&str] = &[
     "IngressCapture",
     "DecodeAndCanonicalize",
@@ -54,15 +53,14 @@ impl OriginToken {
         let request_id = request_id.into();
         if world_context_id.is_empty() || request_id.is_empty() {
             return Err(OriginError {
-                error_id: stable("InvalidHandle"),
+                error_id: "InvalidHandle",
             });
         }
         if !APPLY_PHASES.contains(&apply_phase) {
             return Err(OriginError {
-                error_id: stable("InvalidHandle"),
+                error_id: "InvalidHandle",
             });
         }
-        let _ = SCHEMA_IDS.contains(&"voxel-revision-stamp");
         Ok(Self {
             world_context_id,
             instance_generation,
@@ -91,11 +89,6 @@ impl OriginToken {
     pub fn apply_phase(&self) -> &'static str {
         self.apply_phase
     }
-}
-
-fn stable(id: &'static str) -> &'static str {
-    debug_assert!(STABLE_ERROR_IDS.contains(&id));
-    id
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

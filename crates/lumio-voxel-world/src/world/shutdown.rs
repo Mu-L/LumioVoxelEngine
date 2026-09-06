@@ -11,12 +11,12 @@ use super::state::{has_session_edge, intern_session_event, intern_session_state}
 pub struct WorldShutdown;
 
 impl WorldShutdown {
-    /// Close ingress and reject new writes via generated `Drain`.
+    /// Close ingress and reject new writes via the `Drain` transition.
     pub fn begin(world: &mut VoxelWorld, sink: &mut WorldEventSink) -> Result<(), WorldError> {
         if sequence_reached(world, "Draining") {
             return Ok(());
         }
-        apply_generated(world, "Drain", "Draining")?;
+        apply_session_transition(world, "Drain", "Draining")?;
         emit_phase(world, sink, "Drain");
         Ok(())
     }
@@ -31,7 +31,7 @@ impl WorldShutdown {
         }
         world.instance.ledger.abort_in_flight();
         let _exported = WorldDiagnostics::snapshot(world);
-        apply_generated(world, "FinalSnapshotTaken", "Snapshotted")?;
+        apply_session_transition(world, "FinalSnapshotTaken", "Snapshotted")?;
         emit_phase(world, sink, "FinalSnapshotTaken");
         Ok(())
     }
@@ -45,7 +45,7 @@ impl WorldShutdown {
             return Err(WorldError::invalid_handle());
         }
         let old_generation = world.instance.generation;
-        apply_generated(world, "Dispose", "Disposed")?;
+        apply_session_transition(world, "Dispose", "Disposed")?;
         world.instance.write_occupied = false;
         invalidate_generation(world);
         emit_logging(
@@ -73,11 +73,11 @@ fn emit_logging(
     lifecycle: &'static str,
     generation: u64,
 ) {
-    let event = intern_session_event(event).expect("shutdown event is generated");
+    let event = intern_session_event(event).expect("shutdown event is a SimulationSession event");
     sink.emit(logging_event(event, lifecycle, generation));
 }
 
-fn apply_generated(
+fn apply_session_transition(
     world: &mut VoxelWorld,
     event: &'static str,
     to: &'static str,
@@ -115,8 +115,7 @@ fn sequence_reached(world: &VoxelWorld, target: &'static str) -> bool {
 }
 
 fn intern_or(name: &'static str) -> &'static str {
-    intern_session_state(name)
-        .unwrap_or_else(|| panic!("{name} must exist as a generated SimulationSession state"))
+    intern_session_state(name).unwrap_or_else(|| panic!("{name} must be a SimulationSession state"))
 }
 
 fn invalidate_generation(world: &mut VoxelWorld) {

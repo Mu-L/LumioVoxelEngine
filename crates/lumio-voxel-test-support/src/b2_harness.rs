@@ -4,19 +4,18 @@
 
 use crate::fault_injection::{FaultInjector, FaultPoint};
 use crate::workspace_root_from_manifest;
+use lumio_voxel_contracts::sha256;
 use lumio_voxel_contracts::voxel_world::SECTION_PRESENCE;
-use lumio_voxel_contracts::{BASELINE_ID, SCHEMA_EPOCH, SCHEMA_IDS, is_stable_error_id, sha256};
 use lumio_voxel_domain::block::{BlockId, CellOffset};
 use lumio_voxel_domain::config_snapshot::{
-    DecisionEvidence, GateSourceHashes, GeneratedHostCapability, GeneratedVoxelConfig,
-    P0_DECISION_GATES, VoxelConfigSnapshot,
+    HostCapabilitySet, VoxelConfigInput, VoxelConfigSnapshot,
 };
 use lumio_voxel_domain::publication::{
     PublicationAuthority, PublishedReadView, PublishedStateRoot,
 };
 use lumio_voxel_domain::revision::{
-    GeneratedRevisionStamp, PinRegistry, REVISION_STAMP_SCHEMA, RevisionAllocator, WorldRevision,
-    to_generated_stamp,
+    PinRegistry, REVISION_STAMP_SCHEMA, RevisionAllocator, RevisionStamp, WorldRevision,
+    to_revision_stamp,
 };
 use lumio_voxel_domain::section::{
     CoveredSectionAck, DirtyFrontier, DurabilityAckContext, DurabilityAckEvidence,
@@ -29,13 +28,11 @@ use lumio_voxel_ops::mutation::{
     LookupOutcome, MutationEntry, MutationRequest, ReceiptLedger, ReplayDisposition,
     canonical_fingerprint, commit, prepare,
 };
-use lumio_voxel_ops::query::{
-    GeneratedVoxelQueryRequest, QUERY_SCHEMA, QueryExecutor, QueryPlanner,
-};
+use lumio_voxel_ops::query::{QueryExecutor, QueryPlanner, VoxelQueryRequest};
 use lumio_voxel_ops::snapshot::{
     MemoryCaptureWriter, RestorePreflight, RestoreShadowBuilder, encode_capture,
 };
-use lumio_voxel_world::port::GeneratedVoxelWorldPortAdapter;
+use lumio_voxel_world::port::VoxelWorldPortAdapter;
 use lumio_voxel_world::world::{
     AdmittedCommand, BarrierScope, FaultEvidence, ForbiddenWork, RuntimeSnapshotCut, VoxelWorld,
     WorldCommand, WorldConfigAdapter, WorldDescriptor, WorldError, WorldEventSink, WorldFaultPort,
@@ -57,7 +54,6 @@ pub struct B2CaseResult {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct B2VerificationReport {
-    pub baseline: &'static str,
     pub commit: String,
     pub cases: Vec<B2CaseResult>,
 }
@@ -84,7 +80,6 @@ pub fn run_b2_matrix() -> B2VerificationReport {
         case_fault_injector_recoverable(),
     ];
     B2VerificationReport {
-        baseline: BASELINE_ID,
         commit: git_head(),
         cases,
     }
@@ -200,7 +195,6 @@ fn wrap(id: &'static str, name: &'static str, f: fn() -> Result<String, String>)
 }
 
 fn query_single_cut_plan_hash() -> Result<String, String> {
-    require_schema(QUERY_SCHEMA)?;
     let snap = approved_snapshot("b2-query-cut");
     let planner = QueryPlanner::from_approved_snapshot(Arc::clone(&snap), 8)
         .map_err(|err| format!("from_approved_snapshot: {}", err.error_id()))?;
@@ -269,7 +263,6 @@ fn query_single_cut_plan_hash() -> Result<String, String> {
     let mismatch = QueryExecutor::execute(&plan_a, &view_b)
         .err()
         .ok_or_else(|| "stamp mismatch execute succeeded".to_string())?;
-    require_stable(mismatch.error_id())?;
     if mismatch.error_id() != "InvalidHandle" {
         return Err(format!("stamp mismatch {}", mismatch.error_id()));
     }
@@ -330,10 +323,8 @@ fn query_four_state() -> Result<String, String> {
             return Err(format!("{} ready flag", item.section_id()));
         }
         if ready {
-            let schema = item
-                .schema_id()
+            item.schema_id()
                 .ok_or_else(|| "Ready missing schema_id".to_string())?;
-            require_schema(schema)?;
         } else if item.schema_id().is_some() {
             return Err(format!("{} leaked schema_id", item.section_id()));
         }
@@ -375,7 +366,6 @@ fn query_cancel_budget() -> Result<String, String> {
     let cancelled = QueryExecutor::execute_cancelled(&plan, &view)
         .err()
         .ok_or_else(|| "execute_cancelled succeeded".to_string())?;
-    require_stable(cancelled.error_id())?;
     if cancelled.error_id() != "LoaderCancelled" {
         return Err(format!("cancel {}", cancelled.error_id()));
     }
@@ -387,7 +377,6 @@ fn query_cancel_budget() -> Result<String, String> {
     let over = QueryExecutor::walk(&plan, &view, first.evidence().budget_used())
         .err()
         .ok_or_else(|| "second walk succeeded".to_string())?;
-    require_stable(over.error_id())?;
     if over.error_id() != "BudgetExceeded" {
         return Err(format!("second walk {}", over.error_id()));
     }
@@ -408,7 +397,6 @@ fn prepare_wrong_world() -> Result<String, String> {
     let err = prepare(&req, &view, &mut ledger)
         .err()
         .ok_or_else(|| "wrong-world prepare succeeded".to_string())?;
-    require_stable(err.error_id())?;
     if err.error_id() != "SessionMismatch" {
         return Err(format!("wrong world {}", err.error_id()));
     }
@@ -508,7 +496,6 @@ fn commit_atomic_duplicate() -> Result<String, String> {
     let conflict_err = prepare(&conflict, &auth.capture(), &mut ledger)
         .err()
         .ok_or_else(|| "conflict fingerprint prepare succeeded".to_string())?;
-    require_stable(conflict_err.error_id())?;
     if conflict_err.error_id() != "RevisionConflict" {
         return Err(format!("conflict {}", conflict_err.error_id()));
     }
@@ -562,7 +549,6 @@ fn dual_world_fault_isolation() -> Result<String, String> {
     }
 
     let forbidden = reject_forbidden(ForbiddenWork::Io);
-    require_stable(forbidden.error_id())?;
     if forbidden.error_id() != "LoaderTimeout" {
         return Err(format!("reject_forbidden Io {}", forbidden.error_id()));
     }
@@ -680,7 +666,6 @@ fn restore_preflight_and_swap() -> Result<String, String> {
     )
     .err()
     .ok_or_else(|| "truncated preflight succeeded".to_string())?;
-    require_stable(truncated.error_id())?;
     if truncated.error_id() != "InvalidHandle" {
         return Err(format!("truncated {}", truncated.error_id()));
     }
@@ -715,7 +700,6 @@ fn restore_preflight_and_swap() -> Result<String, String> {
 }
 
 fn durability_ack_covers_latest() -> Result<String, String> {
-    require_schema("voxel-durability-ack")?;
     let mut world = create_world("Authority", "ctx-b2-ack", "world-b2-ack", "b2-ack")?;
     drive_to_running(&mut world)?;
     seed_ready(&world, &["s:0:0:0"])?;
@@ -776,7 +760,7 @@ fn durability_ack_covers_latest() -> Result<String, String> {
 }
 
 fn port_adapter_routes() -> Result<String, String> {
-    let interned_schema = intern_schema("voxel-world-port")?;
+    let interned_schema = lumio_voxel_world::port::PORT_SCHEMA;
     let mut world = create_world("Authority", "ctx-b2-port", "world-b2-port", "b2-port")?;
     drive_to_running(&mut world)?;
     let stamp_before = world.publication_authority().capture().stamp().clone();
@@ -785,9 +769,9 @@ fn port_adapter_routes() -> Result<String, String> {
     let cut = RuntimeSnapshotCut::from_live(&world, "cut-port");
     let mut_env = mutation_envelope(&world, "txn-port")?;
     let (via_query, receipt) = {
-        let mut adapter = GeneratedVoxelWorldPortAdapter::new(&mut world);
+        let mut adapter = VoxelWorldPortAdapter::new(&mut world);
         if !std::ptr::eq(adapter.schema_id(), interned_schema) {
-            return Err("adapter.schema_id is not interned SCHEMA_IDS".into());
+            return Err("adapter.schema_id is not the interned PORT_SCHEMA".into());
         }
         let via_query = adapter
             .query(query_env)
@@ -822,7 +806,7 @@ fn port_adapter_routes() -> Result<String, String> {
     {
         return Err("adapter commit did not publish a new identity".into());
     }
-    Ok("GeneratedVoxelWorldPortAdapter query/prepare/commit/capture routed".into())
+    Ok("VoxelWorldPortAdapter query/prepare/commit/capture routed".into())
 }
 
 fn fault_injector_recoverable() -> Result<String, String> {
@@ -832,8 +816,6 @@ fn fault_injector_recoverable() -> Result<String, String> {
     if FaultInjector::recoverable(FaultPoint::PostPublication) {
         return Err("PostPublication must not be recoverable".into());
     }
-    require_stable(FaultInjector::error_id(FaultPoint::PrePublication))?;
-    require_stable(FaultInjector::error_id(FaultPoint::PostPublication))?;
     if FaultInjector::error_id(FaultPoint::PrePublication) != "InvalidHandle" {
         return Err("PrePublication error_id".into());
     }
@@ -853,45 +835,15 @@ fn fault_injector_recoverable() -> Result<String, String> {
 }
 
 fn approved_snapshot(label: &str) -> Arc<VoxelConfigSnapshot> {
-    let source = GateSourceHashes {
-        architecture_baseline_id: BASELINE_ID.to_string(),
-        voxel_head: "b2f0d8a3763a02f805e29cbd101560ba7fdca77b".to_string(),
-        architecture_mirror_sha256:
-            "f1d36acf33a1f5e8326a9e58d609fcf7d9fa85177f9b5b60bb3f4742c1afebd0".to_string(),
-        v13_decision_gates_sha256:
-            "4850057dd8926c11c8c3beebe109d18dffdb7e84cd451426d7d635860be5ede2".to_string(),
-        blueprint_sha256: "32e76066eb298aad20f4149760abbeddacb6d6c43e096945f1cf0ea75b2471aa"
-            .to_string(),
-    };
-    let digests: BTreeMap<String, String> = P0_DECISION_GATES
-        .iter()
-        .map(|gate| {
-            (
-                (*gate).to_string(),
-                hex32(&sha256(format!("approved-{gate}").as_bytes())),
-            )
-        })
-        .collect();
-    let evidence: Vec<DecisionEvidence> = P0_DECISION_GATES
-        .iter()
-        .map(|gate| DecisionEvidence {
-            gate_id: (*gate).to_string(),
-            approval_status: "approved".to_string(),
-            source_hashes: source.clone(),
-            evidence_digest: digests[*gate].clone(),
-        })
-        .collect();
-    let cfg = GeneratedVoxelConfig {
+    let cfg = VoxelConfigInput {
         schema_id: "config-table",
         host_capability_schema_id: "host-capability",
-        schema_epoch: SCHEMA_EPOCH,
         config_hash: hex32(&sha256(label.as_bytes())),
-        gate_source_hashes: digests,
-        host_capability: GeneratedHostCapability::from_names(["Native", "ReferenceVoxel"]),
+        host_capability: HostCapabilitySet::from_names(["Native", "ReferenceVoxel"]),
         start_capabilities: vec!["Native".into(), "ReferenceVoxel".into()],
         key_material: None,
     };
-    VoxelConfigSnapshot::from_generated(&cfg, &evidence).expect("approved P0 snapshot")
+    VoxelConfigSnapshot::load(&cfg).expect("valid voxel config")
 }
 
 fn create_world(
@@ -1030,7 +982,7 @@ fn query_cmd(world: &VoxelWorld, query_id: &str) -> Result<WorldCommand, String>
     let view = world.state_view();
     Ok(WorldCommand::Query {
         origin: origin_of(world, query_id)?,
-        request: GeneratedVoxelQueryRequest {
+        request: VoxelQueryRequest {
             query_id: query_id.to_string(),
             world_id: view.world_id().to_string(),
             context: view.world_context_id().to_string(),
@@ -1043,12 +995,12 @@ fn query_cmd(world: &VoxelWorld, query_id: &str) -> Result<WorldCommand, String>
 fn query_envelope(
     world: &VoxelWorld,
     query_id: &str,
-) -> Result<OriginEnvelope<GeneratedVoxelQueryRequest>, String> {
+) -> Result<OriginEnvelope<VoxelQueryRequest>, String> {
     let view = world.state_view();
     Ok(OriginEnvelope {
         origin: origin_of(world, query_id)?,
         config_hash: world.config_hash().to_string(),
-        payload: GeneratedVoxelQueryRequest {
+        payload: VoxelQueryRequest {
             query_id: query_id.to_string(),
             world_id: view.world_id().to_string(),
             context: view.world_context_id().to_string(),
@@ -1076,8 +1028,8 @@ fn mutation_envelope(
     })
 }
 
-fn query_request(sections: &[&str], cancel: bool) -> GeneratedVoxelQueryRequest {
-    GeneratedVoxelQueryRequest {
+fn query_request(sections: &[&str], cancel: bool) -> VoxelQueryRequest {
+    VoxelQueryRequest {
         query_id: "q-1".to_string(),
         world_id: "world-a".to_string(),
         context: "ctx-1".to_string(),
@@ -1136,7 +1088,7 @@ fn stamp_at(
     generation: u64,
     world_rev_n: u64,
     sections: &[(&str, u64)],
-) -> GeneratedRevisionStamp {
+) -> RevisionStamp {
     let world = world_rev(world_rev_n);
     let mut pairs = Vec::new();
     for (id, rev) in sections {
@@ -1147,7 +1099,7 @@ fn stamp_at(
         let mut reserved = section_alloc.reserve_section().unwrap();
         pairs.push((id.to_string(), reserved.finalize().unwrap()));
     }
-    to_generated_stamp(world_id, context_id, generation, world, &pairs)
+    to_revision_stamp(world_id, context_id, generation, world, &pairs)
 }
 
 fn payload(bytes: &[u8]) -> SectionPayload {
@@ -1186,7 +1138,7 @@ fn dummy_root(
         .insert("s:0:0:0", SectionSlot::ready(payload(payload_bytes)))
         .expect("canonical dummy id");
     PublishedStateRoot::new(
-        GeneratedRevisionStamp {
+        RevisionStamp {
             schema_id: REVISION_STAMP_SCHEMA,
             world_id: world_id.to_string(),
             context_id: context.to_string(),
@@ -1214,7 +1166,7 @@ fn four_state_root(world_id: &str, context: &str, generation: u64) -> PublishedS
         .insert("s:3:0:0", SectionSlot::unavailable())
         .expect("Unavailable");
     PublishedStateRoot::new(
-        GeneratedRevisionStamp {
+        RevisionStamp {
             schema_id: REVISION_STAMP_SCHEMA,
             world_id: world_id.to_string(),
             context_id: context.to_string(),
@@ -1270,7 +1222,7 @@ fn root_at(
         .insert("s:0:0:0", slot)
         .expect("canonical section id");
     let directory = builder.freeze();
-    let stamp = GeneratedRevisionStamp {
+    let stamp = RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: world_id.to_string(),
         context_id: context_id.to_string(),
@@ -1300,7 +1252,7 @@ fn seed_ready(world: &VoxelWorld, sections: &[&str]) -> Result<(), String> {
             .map_err(|err| format!("seed {id}: {}", err.error_id()))?;
         section_revision_set.insert((*id).to_string(), next);
     }
-    let stamp = GeneratedRevisionStamp {
+    let stamp = RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: view.world_id().to_string(),
         context_id: view.world_context_id().to_string(),
@@ -1418,34 +1370,12 @@ fn assert_consistent_cut(view: &PublishedReadView) -> Result<(), String> {
     Ok(())
 }
 
-fn intern_schema(id: &str) -> Result<&'static str, String> {
-    SCHEMA_IDS
-        .iter()
-        .copied()
-        .find(|item| *item == id)
-        .ok_or_else(|| format!("{id} missing from SCHEMA_IDS"))
-}
-
 fn intern_presence(name: &str) -> Result<&'static str, String> {
     SECTION_PRESENCE
         .iter()
         .copied()
         .find(|item| *item == name)
         .ok_or_else(|| format!("{name} missing from SECTION_PRESENCE"))
-}
-
-fn require_schema(id: &str) -> Result<(), String> {
-    intern_schema(id).map(|_| ())
-}
-
-fn require_stable(id: &str) -> Result<(), String> {
-    if is_stable_error_id(id) {
-        Ok(())
-    } else {
-        Err(format!(
-            "{id} is neither a contract error code nor a frozen-mirror STABLE_ERROR_IDS member"
-        ))
-    }
 }
 
 fn hex32(bytes: &[u8; 32]) -> String {

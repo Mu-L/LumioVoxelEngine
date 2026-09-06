@@ -6,12 +6,9 @@ use super::WorldError;
 use super::admission::WorldEndpoint;
 use super::residency::RegionPinManager;
 use super::state::{WorldState, simulation_session_machine};
-use lumio_voxel_contracts::{SCHEMA_IDS, VOXEL_WORLD_ROLES};
-use lumio_voxel_domain::config_snapshot::{
-    CapabilityView, GeneratedHostCapability, VoxelConfigSnapshot,
-};
+use lumio_voxel_domain::config_snapshot::{CapabilityView, HostCapabilitySet, VoxelConfigSnapshot};
 use lumio_voxel_domain::publication::{PublicationAuthority, PublishedStateRoot};
-use lumio_voxel_domain::revision::{GeneratedRevisionStamp, PinRegistry, REVISION_STAMP_SCHEMA};
+use lumio_voxel_domain::revision::{PinRegistry, REVISION_STAMP_SCHEMA, RevisionStamp};
 use lumio_voxel_domain::section::{DirtyFrontier, SectionDirectoryBuilder};
 use lumio_voxel_ops::async_support::OriginToken;
 use lumio_voxel_ops::mutation::ReceiptLedger;
@@ -26,7 +23,7 @@ const QUERY_SECTION_CAPACITY: usize = 16;
 
 static NEXT_INSTANCE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
-/// Adapter fields wrapping generated Role / Context / Capability / worldId.
+/// Adapter fields wrapping Role / Context / Capability / worldId.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorldDescriptor {
     pub role: String,
@@ -162,7 +159,6 @@ impl VoxelWorld {
         descriptor: WorldDescriptor,
         snapshot: Arc<VoxelConfigSnapshot>,
     ) -> Result<Self, WorldError> {
-        let _ = world_port_schema();
         let role = intern_role(&descriptor.role)?;
         if descriptor.world_context_id.is_empty() || descriptor.config.world_id.is_empty() {
             return Err(WorldError::invalid_handle());
@@ -247,6 +243,9 @@ impl VoxelWorld {
     }
 }
 
+/// 世界角色枚举。本仓自持:活契约不定义 World 角色,值与被删镜像一致。
+pub const VOXEL_WORLD_ROLES: &[&str] = &["Authority", "Replica"];
+
 pub fn intern_role(role: &str) -> Result<&'static str, WorldError> {
     if role.is_empty() {
         return Err(WorldError::invalid_handle());
@@ -279,14 +278,6 @@ fn allocate_generation() -> Result<u64, WorldError> {
     }
 }
 
-fn world_port_schema() -> &'static str {
-    SCHEMA_IDS
-        .iter()
-        .copied()
-        .find(|id| *id == "voxel-world-port")
-        .expect("voxel-world-port must exist in generated SCHEMA_IDS")
-}
-
 fn validate_capabilities(
     requested: &[String],
     snapshot: &VoxelConfigSnapshot,
@@ -294,7 +285,7 @@ fn validate_capabilities(
     if requested.is_empty() {
         return Err(WorldError::claim_not_granted());
     }
-    let generated = GeneratedHostCapability::from_names(requested.iter().cloned());
+    let generated = HostCapabilitySet::from_names(requested.iter().cloned());
     let _view = CapabilityView::derive(&generated, snapshot)
         .map_err(|err| WorldError::mapped(err.error_id()))?;
     Ok(())
@@ -312,7 +303,7 @@ fn initial_root(
     context_id: &str,
     generation: u64,
 ) -> Result<PublishedStateRoot, WorldError> {
-    let stamp = GeneratedRevisionStamp {
+    let stamp = RevisionStamp {
         schema_id: REVISION_STAMP_SCHEMA,
         world_id: world_id.to_string(),
         context_id: context_id.to_string(),

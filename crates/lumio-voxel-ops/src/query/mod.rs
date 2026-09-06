@@ -21,16 +21,15 @@ pub use block_read::{
 pub use budget::BUDGET_FAMILY;
 pub use execute::QueryExecutor;
 pub use plan::{QueryPlan, QueryPlanner};
-pub use result_assembly::{GeneratedVoxelQueryOutcome, QueryEvidence};
+pub use result_assembly::{QueryEvidence, VoxelQueryOutcome};
 pub use section_access::SectionAccessResult;
-pub use validate::GeneratedVoxelQueryRequest;
+pub use validate::VoxelQueryRequest;
 
 use lumio_voxel_contracts::voxel_world as vw;
-use lumio_voxel_contracts::{SCHEMA_IDS, STABLE_ERROR_IDS};
 use lumio_voxel_domain::key::{KeyError, WorldYError};
 pub use lumio_voxel_domain::section::SectionPresenceGuard;
 
-/// Generated schema this mapping wraps. Must stay in `SCHEMA_IDS`.
+/// Schema id this mapping wraps. Frozen wire identity, not a layering name.
 pub const QUERY_SCHEMA: &str = "voxel-query";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,7 +44,7 @@ impl QueryError {
 
     pub(super) fn budget_exceeded() -> Self {
         Self {
-            error_id: stable("BudgetExceeded"),
+            error_id: "BudgetExceeded",
         }
     }
 
@@ -58,19 +57,19 @@ impl QueryError {
 
     pub(super) fn invalid_handle() -> Self {
         Self {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
         }
     }
 
     pub(super) fn claim_not_granted() -> Self {
         Self {
-            error_id: stable("ClaimNotGranted"),
+            error_id: "ClaimNotGranted",
         }
     }
 
     pub(super) fn loader_cancelled() -> Self {
         Self {
-            error_id: stable("LoaderCancelled"),
+            error_id: "LoaderCancelled",
         }
     }
 
@@ -97,19 +96,3 @@ impl std::fmt::Display for QueryError {
 }
 
 impl std::error::Error for QueryError {}
-
-fn stable(id: &'static str) -> &'static str {
-    STABLE_ERROR_IDS
-        .iter()
-        .copied()
-        .find(|candidate| *candidate == id)
-        .expect("mapped error id must exist in generated STABLE_ERROR_IDS")
-}
-
-fn query_schema() -> &'static str {
-    SCHEMA_IDS
-        .iter()
-        .copied()
-        .find(|id| *id == QUERY_SCHEMA)
-        .expect("voxel-query must exist in generated SCHEMA_IDS")
-}

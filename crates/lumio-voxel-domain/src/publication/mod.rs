@@ -14,7 +14,6 @@ pub use prepared::{PreparedPublication, PublicationToken};
 pub use root::{AuxiliaryIndexes, PublishedStateRoot};
 
 use crate::revision::PinError;
-use lumio_voxel_contracts::STABLE_ERROR_IDS;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublishError {
@@ -40,31 +39,31 @@ impl PublishError {
 
     pub(crate) fn invalid_handle() -> Self {
         Self::InvalidHandle {
-            error_id: stable("InvalidHandle"),
+            error_id: "InvalidHandle",
         }
     }
 
     pub(crate) fn handle_double_release() -> Self {
         Self::HandleDoubleRelease {
-            error_id: stable("HandleDoubleRelease"),
+            error_id: "HandleDoubleRelease",
         }
     }
 
     pub(crate) fn snapshot_base_mismatch() -> Self {
         Self::SnapshotBaseMismatch {
-            error_id: stable("SnapshotBaseMismatch"),
+            error_id: "SnapshotBaseMismatch",
         }
     }
 
     pub(crate) fn session_mismatch() -> Self {
         Self::SessionMismatch {
-            error_id: stable("SessionMismatch"),
+            error_id: "SessionMismatch",
         }
     }
 
     pub(crate) fn stale_epoch() -> Self {
         Self::StaleEpoch {
-            error_id: stable("StaleEpoch"),
+            error_id: "StaleEpoch",
         }
     }
 }
@@ -76,14 +75,6 @@ impl std::fmt::Display for PublishError {
 }
 
 impl std::error::Error for PublishError {}
-
-pub(crate) fn stable(id: &'static str) -> &'static str {
-    STABLE_ERROR_IDS
-        .iter()
-        .copied()
-        .find(|candidate| *candidate == id)
-        .expect("mapped error id must exist in generated STABLE_ERROR_IDS")
-}
 
 pub(crate) fn map_pin(err: PinError) -> PublishError {
     match err {
