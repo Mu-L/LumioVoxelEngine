@@ -137,9 +137,12 @@ impl SectionPayloadEnvelope {
         let section_id = SectionId::parse(&self.section_key)?;
         let storage = match self.encoding {
             SectionEncoding::Uniform | SectionEncoding::Palette | SectionEncoding::Raw => {
+                // Full encodings replace the Section outright, so there is no baseline to
+                // diff against. Carrying one is its own rejection, not an encoding mismatch:
+                // the sender must be able to tell "wrong format" from "wrong envelope field".
                 if self.base_section_revision.is_some() {
                     return Err(SectionError::contract_violation(
-                        vw::SECTION_ENCODING_MISMATCH,
+                        vw::BASE_REVISION_ON_FULL_ENCODING,
                     ));
                 }
                 if let Some((_, current_revision)) = baseline
