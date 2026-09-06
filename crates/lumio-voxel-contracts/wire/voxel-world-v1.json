@@ -590,7 +590,7 @@
       "payloadSha256": "对载荷字节的 SHA-256，在任何解释之前先行校验",
       "selfDescribing": "载荷信封必须携带格式标识与版本；不存在只有引擎自己认识的字节段",
       "conditional": {
-        "baseSectionRevision": "encoding = Delta 时必需；其余三种全量编码不得携带"
+        "baseSectionRevision": "encoding = Delta 时必需；Uniform / Palette / Raw 三种全量编码不得携带——全量是整体替换，没有基线可对；携带即 base_revision_on_full_encoding，整条载荷拒收，不得当作 Delta 解释、也不得忽略该字段照常接收"
       }
     },
     "paletteSlotReclamation": {
@@ -652,7 +652,19 @@
         "beforeReady": "pin 未就绪时对其范围的读仍可能是 Pending——这不是违约，是还没就绪；玩法必须等就绪信号",
         "onViolation": "pin 未就绪就开始玩法结算即 pin_region_not_ready"
       },
-      "budgetIsHard": "pin 覆盖的 Section 总数必须落在声明的驻留预算内。超出即 residency_pin_exceeds_budget，**声明当场失败**——不得静默降级成「尽量常驻」，也不得部分满足。",
+      "budget": {
+        "field": "residentSectionBudget",
+        "unit": "Section",
+        "declaredBy": "host-role",
+        "required": true,
+        "statement": "驻留预算是一个显式声明出来的数字：宿主角色声明 residentSectionBudget，量纲是 Section 数（不是格数、不是字节数）。pin 声明覆盖的 Section 总数与它比较，这就是 residency_pin_exceeds_budget 的机器可判的界。",
+        "noDefault": "契约不给缺省值、也不从内存容量推导。未声明 residentSectionBudget 就不得声明 pin——「没写」不等于「无限」。",
+        "notSilentlyLowered": "平台不得在运行时下调 residentSectionBudget 来腾内存；要变只能由宿主角色重新声明。悄悄下调等于把硬声明降级成「尽量」，正是本错误码要拦的那件事。",
+        "notSharedAcrossRoles": "各宿主角色各自声明一个数字，专用服务器与浏览器客户端永不共用——把服务器的预算照搬到页面上会直接撑爆可用内存。",
+        "comparison": "pin 覆盖的 Section 总数 > residentSectionBudget 即 residency_pin_exceeds_budget，声明当场失败。",
+        "abiCarrier": "ABI 面由 residency_pin_declare 的调用方参数携带这个数字（见 engine/abi/native-abi.json）；ABI 不自造预算。"
+      },
+      "budgetIsHard": "pin 覆盖的 Section 总数必须落在声明的 residentSectionBudget 内。超出即 residency_pin_exceeds_budget，**声明当场失败**——不得静默降级成「尽量常驻」，也不得部分满足。",
       "neverEvicted": "pin 内的 Section 不参与任何淘汰，比脏页栅栏更强：干净也不许卸载。只有解除 pin 之后才可卸载。",
       "notStreaming": "pin 区域不参与按玩家位置的流式调度与优先级排序；它就是一直在。",
       "sizing": "pin 的成本按 Section 算，不按格算。举例：61×61 格、2 格高的一张小地图，覆盖 ceil(61/16) × ceil(61/16) × 1 = 4 × 4 × 1 = 16 个 Section，调色板态下约 64 KB——全图常驻在这种量级上是白给的。"
@@ -770,7 +782,9 @@
     "pinned_read_returned_pending",
     "unknown_behavior_template",
     "cell_read_missing_presence",
-    "unregistered_block_type"
+    "unregistered_block_type",
+    "write_batch_partially_applied",
+    "base_revision_on_full_encoding"
   ],
   "rules": [
     {
@@ -1071,7 +1085,7 @@
       "id": "write.batch-is-all-or-nothing",
       "text": "一批写入任一条目校验失败即整批拒绝，不得部分应用",
       "enforcedBy": "receiver",
-      "onViolation": "write_batch_too_large"
+      "onViolation": "write_batch_partially_applied"
     },
     {
       "id": "identity.cell-offset-formula",
@@ -1114,6 +1128,24 @@
       "text": "单格读必须返回 presence；缺块时不给 BlockId 字段，不得用 0 或空气顶替",
       "enforcedBy": "receiver",
       "onViolation": "cell_read_missing_presence"
+    },
+    {
+      "id": "write.batch-size-cap",
+      "text": "一批写入的条目数不得超过 limits.maxEntriesPerWriteBatch（65536）；超出即整批拒绝，不得截断后提交前 65536 条",
+      "enforcedBy": "receiver",
+      "onViolation": "write_batch_too_large"
+    },
+    {
+      "id": "payload.full-encoding-carries-no-base-revision",
+      "text": "Uniform / Palette / Raw 三种全量编码不得携带 baseSectionRevision；全量是整体替换，没有基线可对，携带即拒收整条载荷",
+      "enforcedBy": "receiver",
+      "onViolation": "base_revision_on_full_encoding"
+    },
+    {
+      "id": "residency.pin-budget-is-declared",
+      "text": "驻留预算必须由宿主角色以 residentSectionBudget 显式声明，量纲是 Section 数；未声明时预算按 0 处理，任何 pin 声明都超预算，平台也不得在运行时下调该数字来制造同一结果",
+      "enforcedBy": "receiver",
+      "onViolation": "residency_pin_exceeds_budget"
     }
   ],
   "testCases": [
@@ -2059,6 +2091,61 @@
       "expectedRejection": "cell_read_missing_presence",
       "then": "拒绝；玩法会以为那里是空的",
       "validatorCheck": false
+    },
+    {
+      "name": "write_batch_partially_applied_after_entry_rejection",
+      "class": "write",
+      "violates": "write.batch-is-all-or-nothing",
+      "given": "一批 3 条写入，第 2 条的 expectedSectionRevision 已过期",
+      "when": "实现把第 1 条发布出去、拒掉第 2 条、丢弃第 3 条",
+      "expectedRejection": "write_batch_partially_applied",
+      "then": "拒绝；原子性被破坏后世界处于既非提交前也非提交后的第三种状态，调用方无法重放。这条与 write_batch_too_large 是两件事，不得互相顶替",
+      "validatorCheck": false
+    },
+    {
+      "name": "write_batch_exceeds_entry_cap",
+      "class": "write",
+      "violates": "write.batch-size-cap",
+      "given": "一批写入携带 65537 条条目，上限是 65536",
+      "when": "提交该批",
+      "entryCount": 65537,
+      "expectedRejection": "write_batch_too_large",
+      "then": "拒绝整批；不得只收前 65536 条——那既违反上限也违反原子性",
+      "validatorCheck": false
+    },
+    {
+      "name": "uniform_payload_carries_base_revision",
+      "class": "payload",
+      "violates": "payload.full-encoding-carries-no-base-revision",
+      "given": "一条 encoding = Uniform 的载荷在信封里携带 baseSectionRevision = 12",
+      "when": "提交该载荷",
+      "encoding": "Uniform",
+      "baseSectionRevision": 12,
+      "expectedRejection": "base_revision_on_full_encoding",
+      "then": "拒收整条载荷；全量编码是整体替换，没有基线可对。不得把它按 Delta 解释，也不得忽略该字段照常接收——两种做法都会让派发方以为自己的错法被接受了",
+      "validatorCheck": false
+    },
+    {
+      "name": "pin_exceeds_declared_section_budget",
+      "class": "residency",
+      "violates": "residency.pin-budget-is-hard",
+      "given": "宿主角色声明 residentSectionBudget = 256 个 Section",
+      "when": "提交一个覆盖 400 个 Section 的 pin 声明",
+      "residentSectionBudget": 256,
+      "requestedSections": 400,
+      "expectedRejection": "residency_pin_exceeds_budget",
+      "then": "声明当场失败；不得先常驻 256 个再返回成功，也不得把预算悄悄抬到 400",
+      "validatorCheck": false
+    },
+    {
+      "name": "gameplay_settles_before_pin_ready",
+      "class": "residency",
+      "violates": "residency.pin-ready-before-gameplay",
+      "given": "一个已声明但尚未收到就绪信号的 pin",
+      "when": "玩法在该区域内开始爆炸结算",
+      "expectedRejection": "pin_region_not_ready",
+      "then": "拒绝；就绪前读到 Pending 是合法的，玩法必须等就绪信号，否则同一次爆炸在两端结算出不同结果",
+      "validatorCheck": false
     }
   ],
   "boundary": {
@@ -2157,9 +2244,9 @@
     "batch": {
       "statement": "一批写入是若干条目加一个事务 ID；整批要么全生效要么全不生效。",
       "transactionId": "提交按事务 ID 幂等；重复提交返回同一份回执，不重复生效",
-      "allOrNothing": "任一条目校验失败即整批拒绝，不部分应用",
+      "allOrNothing": "任一条目校验失败即整批拒绝，不部分应用；观察到只有一部分条目生效即 write_batch_partially_applied——这是原子性被破坏，与批太大是两件事，两个错误码不得混用",
       "maxEntriesPerBatch": 65536,
-      "onExceeded": "超出即 write_batch_too_large，拒绝整批"
+      "onExceeded": "条目数超出 maxEntriesPerBatch 即 write_batch_too_large，拒绝整批，不得截断后提交前 65536 条"
     },
     "noStringMap": "条目是结构化字段，不是字符串键值 map。字符串 map 让字段名、类型与边界都不可机器校验，是 unstructured_mutation_entry。",
     "orderWithinBatch": "同一批内对同一格的多次写入按提交序生效，最后一条为准；顺序排死，重放结果一致。",
