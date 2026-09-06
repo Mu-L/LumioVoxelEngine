@@ -284,12 +284,18 @@ fn dirty_frontier_newer_dirty_not_covered_by_older_ack() {
     let old_ack = ack("world-a", 7, 4, &[("s:0:0:0", 5)]);
     let old_cover = first.covered_by(&old_ack).expect("cut matches first dirty");
     assert!(old_cover.contains("s:0:0:0").expect("canonical id"));
-    let newer_cover = newer
+    // Contract rule `residency.ack-covers-declared-bound` / invalidCase
+    // `ack_clears_later_revision`: an ack whose declared bound sits below a
+    // still-dirty Section is rejected, not silently accepted as a no-op.
+    // Otherwise the sender of a stale ack never learns its cut was too low.
+    let err = newer
         .covered_by(&old_ack)
-        .expect("older ack is still a valid cut");
-    assert!(
-        !newer_cover.contains("s:0:0:0").expect("canonical id"),
-        "newer dirty must not be covered by an older ack revision"
+        .expect_err("an ack below a still-dirty revision is stale");
+    assert_eq!(err.error_id(), vw::STALE_SECTION_REVISION);
+    assert_eq!(
+        newer.latest_revision("s:0:0:0").expect("canonical id"),
+        Some(9),
+        "a rejected ack leaves the dirty frontier exactly as it was"
     );
 
     let matching = ack("world-a", 7, 8, &[("s:0:0:0", 9)]);
@@ -424,4 +430,51 @@ fn section_delta_dirty_source_has_no_publish_clear_or_fs() {
         );
         assert!(!src.contains("section_size"), "no public section_size");
     }
+}
+
+/// Contract invalidCase `ack_clears_later_revision` (rule
+/// `residency.ack-covers-declared-bound`), literal shape: a Section dirty at
+/// revision 9 and a receipt declaring `upToSectionRevision = 7`.
+///
+/// The three boundaries around it are asserted too, so the rejection cannot quietly
+/// widen: a receipt that does not name a dirty Section is partial coverage, a receipt
+/// naming a Section that is no longer dirty is a legal duplicate, and an exact bound
+/// still covers.
+#[test]
+fn ack_below_a_dirty_section_bound_is_stale() {
+    let frontier = DirtyFrontier::new("world-a", 7)
+        .expect("bound frontier")
+        .record("s:0:0:0", 9, "AuthoritativeWrite")
+        .expect("dirty at 9")
+        .record("s:1:0:0", 2, "AuthoritativeWrite")
+        .expect("second dirty section");
+
+    let err = frontier
+        .covered_by(&ack("world-a", 7, 9, &[("s:0:0:0", 7)]))
+        .expect_err("a bound of 7 does not reach a Section dirty at 9");
+    assert_eq!(err.error_id(), vw::STALE_SECTION_REVISION);
+    assert_eq!(
+        frontier.latest_revision("s:0:0:0").expect("canonical id"),
+        Some(9),
+        "the rejected receipt cleared nothing"
+    );
+
+    // Naming no dirty Section at all is partial coverage, not a stale receipt.
+    let partial = frontier
+        .covered_by(&ack("world-a", 7, 9, &[("s:1:0:0", 2)]))
+        .expect("partial coverage stays legal");
+    assert!(partial.contains("s:1:0:0").expect("canonical id"));
+    assert!(!partial.contains("s:0:0:0").expect("canonical id"));
+
+    // A receipt for a Section that is no longer dirty is a duplicate, not a stale one.
+    let cleared = frontier.except_covered(&partial);
+    cleared
+        .covered_by(&ack("world-a", 7, 9, &[("s:1:0:0", 2)]))
+        .expect("a duplicate receipt over a clean Section is a no-op");
+
+    // An exact bound still covers.
+    let exact = frontier
+        .covered_by(&ack("world-a", 7, 9, &[("s:0:0:0", 9)]))
+        .expect("an exact bound covers");
+    assert!(exact.contains("s:0:0:0").expect("canonical id"));
 }

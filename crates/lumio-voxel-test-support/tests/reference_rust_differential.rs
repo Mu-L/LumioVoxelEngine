@@ -44,8 +44,15 @@ const EXPECTED_CONFIG_HASH: &str =
 // separate implementations of the same contract and both landed on the value below,
 // which is the only reason it is trustworthy — a golden that only one leg produced
 // would prove nothing.
+//
+// Moved again from 96d965e1… by wiring up contract rule
+// `residency.ack-covers-declared-bound`: a DurabilityAck naming a Section that is still
+// dirty above its declared bound is now rejected with `stale_section_revision` instead of
+// being accepted as an idempotent no-op, so the `stale` and `replayed-old` ack probes
+// changed outcome in the trace. Both legs were updated separately and again landed on the
+// same value below; `independent_oracle_verified` above is what makes that check real.
 const GOLDEN_TRACE_SHA256: &str =
-    "96d965e12882ea8dad79562058df12d7afe56fdbd4f14dca39cd25640e616ed1";
+    "9590019e343f175ae8bc9961729a6cd2d4d0333113946db5cef4ca1bd3601123";
 
 #[test]
 fn reference_and_rust_execute_shared_canonical_vectors() {
@@ -293,18 +300,20 @@ fn reference_and_rust_execute_shared_canonical_vectors() {
             "wrong-kind"
         ]
     );
-    assert_eq!(
-        observations[9].probes[0].ack.as_ref().unwrap().coverage_len,
-        0
-    );
-    assert_eq!(
-        observations[9].probes[1].ack.as_ref().unwrap().coverage_len,
-        0
-    );
-    assert_eq!(
-        observations[9].probes[2].ack.as_ref().unwrap().coverage_len,
-        0
-    );
+    // Contract rule `residency.ack-covers-declared-bound`: `stale`, `partial` and
+    // `replayed-old` each name a Section that is still dirty above the bound they
+    // declare, so all three are rejected and produce no ack at all.
+    for index in [0, 1, 2] {
+        let probe = &observations[9].probes[index];
+        assert!(!probe.ok, "probe {} must be rejected", probe.label);
+        assert_eq!(
+            probe.error_id.as_deref(),
+            Some(vw::STALE_SECTION_REVISION),
+            "probe {}",
+            probe.label
+        );
+        assert!(probe.ack.is_none(), "probe {} must not ack", probe.label);
+    }
     assert_eq!(
         observations[9].probes[3].ack.as_ref().unwrap().coverage_len,
         2
@@ -313,7 +322,7 @@ fn reference_and_rust_execute_shared_canonical_vectors() {
         observations[9].probes[4].ack.as_ref().unwrap().coverage_len,
         0
     );
-    for probe in observations[9].probes.iter().take(5) {
+    for probe in observations[9].probes.iter().skip(3).take(2) {
         let ack = probe.ack.as_ref().unwrap();
         assert_eq!(ack.world_id, "world-differential");
         assert_eq!(ack.context_id, "ctx-differential");

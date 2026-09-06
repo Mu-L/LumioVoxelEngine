@@ -5,6 +5,7 @@
 use crate::fault_injection::{FaultInjector, FaultPoint};
 use crate::workspace_root_from_manifest;
 use lumio_voxel_contracts::sha256;
+use lumio_voxel_contracts::voxel_world as vw;
 use lumio_voxel_contracts::voxel_world::SECTION_PRESENCE;
 use lumio_voxel_domain::block::{BlockId, CellOffset};
 use lumio_voxel_domain::config_snapshot::{
@@ -715,33 +716,24 @@ fn durability_ack_covers_latest() -> Result<String, String> {
         .dirty_frontier()
         .clone();
 
+    // Contract `residency.ack-covers-declared-bound`: a receipt whose declared bound sits
+    // below a still-dirty Section is rejected outright, and the dirty mark survives.
     let old: DurabilityAckEvidence = ack_for(&world, &[("s:0:0:0", latest - 1)]);
-    let old_covered = frontier
+    let stale = frontier
         .covered_by(&old)
-        .map_err(|err| format!("covered_by old: {}", err.error_id()))?;
-    if old_covered
-        .contains("s:0:0:0")
-        .map_err(|err| err.error_id().to_string())?
-    {
-        return Err("old ack covered the newer dirty entry".into());
+        .err()
+        .ok_or_else(|| "stale ack was accepted as a cut".to_string())?;
+    if stale.error_id() != vw::STALE_SECTION_REVISION {
+        return Err(format!("stale ack reported {}", stale.error_id()));
     }
-    if frontier
-        .except_covered(&old_covered)
-        .latest_revision("s:0:0:0")
-        .map_err(|err| err.error_id().to_string())?
-        != Some(latest)
-    {
-        return Err("except_covered dropped uncovered dirty".into());
-    }
-    let old_receipt = apply_durability_ack(&mut world, old)
-        .map_err(|err| format!("old ack: {}", err.error_id()))?;
-    if old_receipt.coverage_len() != 0
-        || old_receipt.old_root() != before
-        || old_receipt.new_root() != before
+    let old_error = apply_durability_ack(&mut world, old)
+        .err()
+        .ok_or_else(|| "stale ack was applied".to_string())?;
+    if old_error.error_id() != vw::STALE_SECTION_REVISION
         || identity_of(&world) != before
         || latest_dirty(&world, "s:0:0:0")? != Some(latest)
     {
-        return Err("old ack cleared newer dirty".into());
+        return Err("stale ack did not leave the newer dirty mark intact".into());
     }
 
     let covering: DurabilityAckEvidence = ack_for(&world, &[("s:0:0:0", latest)]);
@@ -756,7 +748,7 @@ fn durability_ack_covers_latest() -> Result<String, String> {
     let lease = WorldWriteLane::try_acquire(&mut world)
         .map_err(|err| format!("lane after ack: {}", err.error_id()))?;
     drop(lease);
-    Ok("old ack no-op; covering DurabilityAck clears latest and swaps identity".into())
+    Ok("stale ack rejected; covering DurabilityAck clears latest and swaps identity".into())
 }
 
 fn port_adapter_routes() -> Result<String, String> {

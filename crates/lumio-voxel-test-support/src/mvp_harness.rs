@@ -12,6 +12,7 @@ use crate::deterministic_executor::{DeterministicExecutor, Schedule};
 use crate::reference_harness::VoxelOperation;
 use crate::workspace_root_from_manifest;
 use lumio_voxel_contracts::sha256;
+use lumio_voxel_contracts::voxel_world as vw;
 use lumio_voxel_contracts::voxel_world::SECTION_PRESENCE;
 use lumio_voxel_domain::block::{BlockId, CellOffset};
 use lumio_voxel_domain::config_snapshot::{
@@ -542,23 +543,24 @@ fn step_durability_ack(
         return Err("no older revision available for a stale ack".into());
     }
     let before = identity_of(&live.authority);
+    // Contract `residency.ack-covers-declared-bound`: a receipt declaring a bound below a
+    // still-dirty Section is rejected; the dirty mark and the identity both survive.
     let old: AckEvidence = ack_for(&live.authority, &[("s:0:0:0", latest - 1)]);
-    let old_receipt = {
+    let old_error = {
         let mut adapter = VoxelWorldPortAdapter::new(&mut live.authority);
         adapter
             .apply_durability_ack(old)
-            .map_err(|err| format!("old ack: {}", err.error_id()))?
+            .err()
+            .ok_or_else(|| "stale ack was applied".to_string())?
     };
     report
         .commands
         .push("VoxelWorldPortAdapter::apply_durability_ack old".into());
-    if old_receipt.coverage_len() != 0
-        || old_receipt.old_root() != before
-        || old_receipt.new_root() != before
+    if old_error.error_id() != vw::STALE_SECTION_REVISION
         || identity_of(&live.authority) != before
         || latest_dirty(&live.authority, "s:0:0:0")? != Some(latest)
     {
-        return Err("old ack cleared newer dirty".into());
+        return Err("stale ack did not leave the newer dirty mark intact".into());
     }
 
     let covering: AckEvidence = ack_for(&live.authority, &[("s:0:0:0", latest)]);
@@ -580,7 +582,7 @@ fn step_durability_ack(
         return Err("covering ack left dirty in place".into());
     }
     live.authority_refresh(report);
-    Ok("old ack no-op; covering DurabilityAck clears latest".into())
+    Ok("stale ack rejected; covering DurabilityAck clears latest".into())
 }
 
 fn step_close(live: &mut LiveSlice, report: &mut MvpIntegrationReport) -> Result<String, String> {

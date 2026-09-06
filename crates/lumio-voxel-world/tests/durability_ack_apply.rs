@@ -313,8 +313,12 @@ fn covering_ack_clears_only_that_section_and_changes_root() {
     assert_lane_free(&mut world);
 }
 
+/// Contract rule `residency.ack-covers-declared-bound`, invalidCase
+/// `ack_clears_later_revision`: a receipt whose declared upper bound sits below a
+/// Section that is still dirty above it is rejected. Accepting it as an idempotent
+/// no-op left the sender of a stale receipt with no feedback at all.
 #[test]
-fn older_ack_does_not_clear_newer_dirty() {
+fn older_ack_is_rejected_and_leaves_newer_dirty_intact() {
     let mut world = running_world_with_dirty("r00137-old", &["s:0:0:0"]);
     let latest = latest_dirty(&world, "s:0:0:0").expect("dirty after commit");
     assert!(
@@ -323,10 +327,10 @@ fn older_ack_does_not_clear_newer_dirty() {
     );
     let before = identity_of(&world);
     let ack = ack_for(&world, &[("s:0:0:0", latest - 1)]);
-    let receipt = apply_durability_ack(&mut world, ack).expect("old ack is idempotent");
-    assert_eq!(receipt.coverage_len(), 0);
-    assert_eq!(receipt.old_root(), before);
-    assert_eq!(receipt.new_root(), before);
+    let err = apply_durability_ack(&mut world, ack).expect_err("stale ack is rejected");
+    assert_eq!(err.error_id(), "stale_section_revision");
+    // The `then` half of the invalidCase: a receipt only ever covers up to the bound it
+    // declared, so the newer dirty mark survives the rejection untouched.
     assert_eq!(identity_of(&world), before);
     assert_eq!(latest_dirty(&world, "s:0:0:0"), Some(latest));
     assert_lane_free(&mut world);

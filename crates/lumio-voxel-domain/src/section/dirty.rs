@@ -295,11 +295,18 @@ impl DirtyFrontier {
 
         let mut covered = BTreeMap::new();
         for (id, entry) in &self.entries {
-            if let Some(cut_rev) = up_to.get(id)
-                && entry.latest <= *cut_rev
-            {
-                covered.insert(*id, entry.latest);
+            let Some(cut_rev) = up_to.get(id) else {
+                // Not named by this receipt at all: partial coverage is legal, the
+                // Section simply stays dirty.
+                continue;
+            };
+            // Contract `residency.ack-covers-declared-bound`: the receipt named this
+            // Section but declared a bound below what is still dirty. Silently treating
+            // it as a no-op leaves the sender believing its cut was accepted.
+            if entry.latest > *cut_rev {
+                return Err(DirtyError::stale_section_revision());
             }
+            covered.insert(*id, entry.latest);
         }
         Ok(DirtyCoverage { covered })
     }

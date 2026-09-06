@@ -1337,8 +1337,16 @@ impl OracleState {
                     error = Some("InvalidHandle".into());
                     break;
                 }
-                if self.dirty.get(id).is_some_and(|d| d.latest <= *up_to) {
-                    coverage.push(id.clone());
+                // Contract `residency.ack-covers-declared-bound`: a receipt that names a
+                // Section still dirty above its declared bound is rejected outright.
+                match self.dirty.get(id) {
+                    Some(entry) if entry.latest > *up_to => {
+                        ok = false;
+                        error = Some(vw::STALE_SECTION_REVISION.into());
+                        break;
+                    }
+                    Some(_) => coverage.push(id.clone()),
+                    None => {}
                 }
             }
             if ok && !coverage.is_empty() {
