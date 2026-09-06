@@ -55,5 +55,8 @@ Living Architecture,Baseline、`schemas/`、`tools/lumio_contract.py` 全部废�
 - **换来**:仓里只有一份公共语义真值、一套错误 id 命名空间、一个 16³ 数据单元的名字,不再有永远无法
   重新生成的复印件和证明不了任何事的 CI 校对。
 - 被本条取代:[0007](0007-v1.4-implementation-baseline.md)、[0009](0009-consume-adr-040-041-artifacts.md)、
-  [0010](0010-generated-clean-keeps-its-own-sha256.md)、[0013](0013-voxel-world-contract-and-section-rename.md)。
-  历史 ADR 正文不改写,只在状态行标注。
+  [0010](0010-generated-clean-keeps-its-own-sha256.md)。历史 ADR 正文不改写,只在状态行标注。
+- **[0013](0013-voxel-world-contract-and-section-rename.md) 不在此列,它仍然生效。** 本条是它的延续:
+  0013 定「体素公共语义改从活契约取、16³ 数据单元叫 Section」,本条只是把当时还留着的另一份来源
+  (死基线镜像)整棵删掉,让 0013 定的那条唯一路径真正唯一。0013 定下的东西——`wire/` 逐字节副本、
+  `CONTRACT_SHA256`、一致性测试、`ChunkPayload::schema_id()` 仍返回 `voxel-chunk-page`——一条都不撤。
